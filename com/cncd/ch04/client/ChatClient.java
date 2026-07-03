@@ -38,37 +38,37 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private static final int MOMENT_TEXT_LIMIT = 300;
     private static final String BROADCAST_CHAT = "广播";
     private static final String GROUP_LABEL_PREFIX = "群聊 · ";
-    private static final Color APP_BACKGROUND = new Color(242, 245, 249);
-    private static final Color SIDEBAR_BACKGROUND = new Color(235, 240, 247);
+    private static final Color APP_BACKGROUND = new Color(237, 237, 237);
+    private static final Color SIDEBAR_BACKGROUND = new Color(247, 247, 247);
     private static final Color PANEL_BACKGROUND = Color.WHITE;
     private static final Color SURFACE = Color.WHITE;
-    private static final Color SURFACE_SOFT = new Color(248, 250, 252);
-    private static final Color CHAT_BACKGROUND = new Color(246, 248, 251);
-    private static final Color PRIMARY = new Color(37, 99, 235);
-    private static final Color PRIMARY_DARK = new Color(29, 78, 216);
-    private static final Color PRIMARY_LIGHT = new Color(219, 234, 254);
-    private static final Color PRIMARY_SOFT = new Color(239, 246, 255);
-    private static final Color BORDER = new Color(215, 224, 236);
-    private static final Color BORDER_LIGHT = new Color(229, 235, 245);
-    private static final Color TEXT = new Color(30, 41, 59);
-    private static final Color MUTED = new Color(100, 116, 139);
-    private static final Color SOFT_MUTED = new Color(148, 163, 184);
-    private static final Color SUCCESS = new Color(22, 163, 74);
-    private static final Color WARNING = new Color(217, 119, 6);
-    private static final Color DANGER = new Color(220, 38, 38);
+    private static final Color SURFACE_SOFT = new Color(242, 242, 242);
+    private static final Color CHAT_BACKGROUND = new Color(245, 245, 245);
+    private static final Color PRIMARY = new Color(7, 193, 96);
+    private static final Color PRIMARY_DARK = new Color(5, 166, 83);
+    private static final Color PRIMARY_SOFT = new Color(240, 251, 244);
+    private static final Color SIDEBAR_SELECTED = new Color(228, 228, 228);
+    private static final Color BORDER = new Color(218, 218, 218);
+    private static final Color BORDER_LIGHT = new Color(232, 232, 232);
+    private static final Color TEXT = new Color(25, 25, 25);
+    private static final Color MUTED = new Color(117, 117, 117);
+    private static final Color SOFT_MUTED = new Color(166, 166, 166);
+    private static final Color SUCCESS = new Color(7, 193, 96);
+    private static final Color WARNING = new Color(224, 150, 35);
+    private static final Color DANGER = new Color(219, 68, 55);
     private static final Color INCOMING_BUBBLE = Color.WHITE;
-    private static final Color OUTGOING_BUBBLE = new Color(218, 235, 255);
-    private static final int RADIUS_SM = 10;
-    private static final int RADIUS_MD = 14;
-    private static final int RADIUS_LG = 18;
-    private static final int RADIUS_XL = 24;
+    private static final Color OUTGOING_BUBBLE = new Color(149, 236, 105);
+    private static final int RADIUS_SM = 4;
+    private static final int RADIUS_MD = 6;
+    private static final int RADIUS_LG = 8;
+    private static final int RADIUS_XL = 10;
     private static final int SPACE_XS = 4;
     private static final int SPACE_SM = 8;
     private static final int SPACE_MD = 12;
     private static final int SPACE_LG = 16;
     private static final int SPACE_XL = 20;
-    private static final int SIDEBAR_WIDTH = 304;
-    private static final int BUTTON_HEIGHT = 36;
+    private static final int SIDEBAR_WIDTH = 264;
+    private static final int BUTTON_HEIGHT = 34;
     private static final int INPUT_HEIGHT = 38;
     private static final Font UI_FONT = new Font("Microsoft YaHei UI", Font.PLAIN, 13);
     private static final Font UI_FONT_BOLD = new Font("Microsoft YaHei UI", Font.BOLD, 13);
@@ -85,6 +85,10 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             "\uD83D\uDC94", "\uD83C\uDF89", "\uD83D\uDD25", "\u2728",
             "\uD83C\uDF1F", "\uD83C\uDF81", "\u2615", "\uD83C\uDF70",
             "\uD83C\uDF39", "\uD83E\uDD73", "\uD83D\uDE0B", "\uD83D\uDE44"
+    };
+    private static final Color[] AVATAR_COLORS = {
+            new Color(7, 193, 96), new Color(87, 107, 149), new Color(238, 153, 71),
+            new Color(93, 156, 236), new Color(155, 89, 182), new Color(80, 180, 170)
     };
 
     JPanel northPanel, southPanel, eastPanel;
@@ -238,13 +242,13 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         northPanel = new JPanel(new BorderLayout());
         northPanel.setBackground(SURFACE);
         northPanel.setBorder(new CompoundBorder(
-                new MatteBorder(0, 0, 1, 0, BORDER_LIGHT),
-                pad(12, 18, 12, 18)));
+                new MatteBorder(0, 0, 1, 0, BORDER),
+                pad(10, 18, 10, 18)));
 
         JLabel appTitle = new JLabel("CNCD Chat");
-        appTitle.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 19));
+        appTitle.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 18));
         appTitle.setForeground(TEXT);
-        JLabel appSubTitle = new JLabel("现代桌面聊天实验");
+        JLabel appSubTitle = new JLabel("桌面聊天实验");
         appSubTitle.setFont(UI_FONT_SMALL);
         appSubTitle.setForeground(MUTED);
         JPanel titleBlock = new JPanel();
@@ -275,7 +279,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         JPanel statusBlock = new JPanel();
         statusBlock.setOpaque(false);
         statusBlock.setLayout(new BoxLayout(statusBlock, BoxLayout.X_AXIS));
-        BubblePanel statusPill = createPillPanel(SURFACE_SOFT, BORDER_LIGHT);
+        BubblePanel statusPill = createPillPanel(PRIMARY_SOFT, BORDER_LIGHT);
         statusPill.setLayout(new BorderLayout());
         statusPill.add(statusLabel, BorderLayout.CENTER);
         statusBlock.add(statusPill);
@@ -299,8 +303,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         eastPanel = new JPanel(new BorderLayout(0, SPACE_MD));
         eastPanel.setBackground(SIDEBAR_BACKGROUND);
         eastPanel.setBorder(new CompoundBorder(
-                new MatteBorder(0, 0, 0, 1, BORDER_LIGHT),
-                pad(SPACE_LG, SPACE_MD, SPACE_MD, SPACE_MD)));
+                new MatteBorder(0, 0, 0, 1, BORDER),
+                pad(SPACE_MD, SPACE_SM, SPACE_SM, SPACE_SM)));
         eastPanel.setPreferredSize(new Dimension(SIDEBAR_WIDTH, 0));
 
         JPanel topPanel = new JPanel(new BorderLayout(0, 12));
@@ -313,9 +317,9 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         userModel.addElement(BROADCAST_CHAT);
         onlineList = new JList<String>(userModel);
         onlineList.setFont(UI_FONT_BOLD);
-        onlineList.setFixedCellHeight(64);
+        onlineList.setFixedCellHeight(68);
         onlineList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        onlineList.setSelectionBackground(PRIMARY_LIGHT);
+        onlineList.setSelectionBackground(SIDEBAR_SELECTED);
         onlineList.setSelectionForeground(TEXT);
         onlineList.setBackground(SIDEBAR_BACKGROUND);
         onlineList.setBorder(pad(SPACE_XS, 0, SPACE_XS, 0));
@@ -380,7 +384,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         panel.setOpaque(false);
         panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
 
-        JLabel title = createSectionTitle("会话");
+        JLabel title = createSectionTitle("聊天");
         title.setAlignmentX(Component.LEFT_ALIGNMENT);
 
         conversationSearchField = new PromptTextField("", 14, "搜索好友、群聊、广播");
@@ -403,8 +407,9 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     }
 
     private JPanel createSidebarAccountPanel() {
-        JPanel accountPanel = createCardPanel(SPACE_MD);
-        accountPanel.setLayout(new BorderLayout(SPACE_MD, 0));
+        JPanel accountPanel = new JPanel(new BorderLayout(SPACE_MD, 0));
+        accountPanel.setOpaque(false);
+        accountPanel.setBorder(pad(SPACE_SM, SPACE_XS, SPACE_MD, SPACE_XS));
 
         sidebarAvatar = new AvatarView("?", false);
         sidebarNameLabel = new JLabel("未登录");
@@ -413,7 +418,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         sidebarSignatureLabel = new JLabel("请先登录账号");
         sidebarSignatureLabel.setFont(UI_FONT_SMALL);
         sidebarSignatureLabel.setForeground(MUTED);
-        JLabel onlineBadge = new JLabel("本地账号");
+        JLabel onlineBadge = new JLabel("在线");
         onlineBadge.setFont(new Font("Microsoft YaHei UI", Font.PLAIN, 11));
         onlineBadge.setForeground(PRIMARY_DARK);
 
@@ -448,8 +453,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         JPanel header = new JPanel(new BorderLayout());
         header.setBackground(SURFACE);
         header.setBorder(new CompoundBorder(
-                new MatteBorder(0, 0, 1, 0, BORDER_LIGHT),
-                pad(SPACE_LG, SPACE_XL, SPACE_LG, SPACE_XL)));
+                new MatteBorder(0, 0, 1, 0, BORDER),
+                pad(SPACE_MD, SPACE_MD, SPACE_MD, SPACE_MD)));
         JPanel identity = new JPanel();
         identity.setOpaque(false);
         identity.setLayout(new BoxLayout(identity, BoxLayout.X_AXIS));
@@ -471,13 +476,6 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         identity.add(textBlock);
         header.add(identity, BorderLayout.WEST);
 
-        BubblePanel statePill = createPillPanel(PRIMARY_SOFT, BORDER_LIGHT);
-        statePill.setLayout(new BorderLayout());
-        JLabel stateText = createHintLabel("消息同步中");
-        stateText.setForeground(PRIMARY_DARK);
-        statePill.add(stateText, BorderLayout.CENTER);
-        header.add(statePill, BorderLayout.EAST);
-
         chatPanel.add(header, BorderLayout.NORTH);
         chatPanel.add(createHistoryPanel(), BorderLayout.CENTER);
         chatPanel.add(createInputPanel(), BorderLayout.SOUTH);
@@ -487,7 +485,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private JPanel createHistoryPanel() {
         JPanel panel = new JPanel(new BorderLayout());
         panel.setBackground(CHAT_BACKGROUND);
-        panel.setBorder(pad(SPACE_LG, SPACE_XL, SPACE_LG, SPACE_XL));
+        panel.setBorder(pad(SPACE_LG, SPACE_MD, SPACE_LG, SPACE_MD));
         historyWindow = new ClientHistory();
         sc = createModernScrollPane(historyWindow, CHAT_BACKGROUND);
         sc.setAutoscrolls(true);
@@ -500,10 +498,10 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         southPanel.setBackground(SURFACE);
         southPanel.setBorder(new CompoundBorder(
                 new MatteBorder(1, 0, 0, 0, BORDER_LIGHT),
-                pad(SPACE_MD, SPACE_XL, SPACE_MD, SPACE_XL)));
+                pad(SPACE_MD, SPACE_MD, SPACE_MD, SPACE_MD)));
 
         attachmentPanel = createAttachmentPanel();
-        msgWindow = new PromptTextArea("输入消息，Enter 发送，Shift+Enter 换行");
+        msgWindow = new PromptTextArea("输入消息");
         styleTextArea(msgWindow);
         msgWindow.setRows(3);
         msgWindow.setToolTipText("Enter 发送，Shift+Enter 换行，↑ 取回上一条消息");
@@ -515,45 +513,55 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         });
         installMessageShortcuts();
         buttonSend = createButton("发送", true);
-        buttonSend.setPreferredSize(new Dimension(76, 42));
+        buttonSend.setPreferredSize(new Dimension(76, 36));
         buttonSend.setToolTipText("发送消息 Enter");
-        buttonEmoji = createButton("\uD83D\uDE0A", false);
-        buttonEmoji.setFont(EMOJI_FONT);
+        buttonEmoji = createButton("\u263A", false);
+        buttonEmoji.setFont(new Font("Dialog", Font.PLAIN, 17));
         buttonEmoji.setToolTipText("插入表情");
-        buttonEmoji.setPreferredSize(new Dimension(42, 42));
+        buttonEmoji.setBorder(pad(4, 0, 4, 0));
+        buttonEmoji.setPreferredSize(new Dimension(38, 32));
         buttonFile = createButton("+", false);
         buttonFile.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 18));
         buttonFile.setToolTipText("选择本地文件");
-        buttonFile.setPreferredSize(new Dimension(42, 42));
+        buttonFile.setBorder(pad(4, 0, 4, 0));
+        buttonFile.setPreferredSize(new Dimension(38, 32));
         buttonSend.addActionListener(this);
         buttonEmoji.addActionListener(this);
         buttonFile.addActionListener(this);
         buttonFile.setEnabled(true);
         buttonSend.setEnabled(false);
 
-        JPanel inputRow = new JPanel(new BorderLayout(SPACE_SM, 0));
-        inputRow.setOpaque(false);
-        JPanel inputTools = new JPanel(new GridLayout(1, 2, SPACE_SM, 0));
+        JPanel composer = new JPanel(new BorderLayout(0, SPACE_SM));
+        composer.setOpaque(false);
+
+        JPanel toolbar = new JPanel(new BorderLayout());
+        toolbar.setOpaque(false);
+        JPanel inputTools = new JPanel(new FlowLayout(FlowLayout.LEFT, SPACE_SM, 0));
         inputTools.setOpaque(false);
         inputTools.add(buttonEmoji);
         inputTools.add(buttonFile);
-        inputRow.add(inputTools, BorderLayout.WEST);
+        toolbar.add(inputTools, BorderLayout.WEST);
+
         JScrollPane messageScroll = new JScrollPane(msgWindow);
         messageScroll.setBorder(new RoundedBorder(BORDER, RADIUS_LG));
         messageScroll.getViewport().setBackground(Color.WHITE);
-        inputRow.add(messageScroll, BorderLayout.CENTER);
-        inputRow.add(buttonSend, BorderLayout.EAST);
+        messageScroll.setPreferredSize(new Dimension(0, 92));
 
-        JLabel hint = createHintLabel("Enter 发送 · Shift+Enter 换行 · ↑ 取回上一条");
+        JPanel actionRow = new JPanel(new BorderLayout());
+        actionRow.setOpaque(false);
+        actionRow.add(buttonSend, BorderLayout.EAST);
+
+        composer.add(toolbar, BorderLayout.NORTH);
+        composer.add(messageScroll, BorderLayout.CENTER);
+        composer.add(actionRow, BorderLayout.SOUTH);
 
         southPanel.add(attachmentPanel, BorderLayout.NORTH);
-        southPanel.add(inputRow, BorderLayout.CENTER);
-        southPanel.add(hint, BorderLayout.SOUTH);
+        southPanel.add(composer, BorderLayout.CENTER);
         return southPanel;
     }
 
     private JPanel createAttachmentPanel() {
-        JPanel panel = new BubblePanel(PRIMARY_SOFT, new Color(147, 197, 253), RADIUS_MD);
+        JPanel panel = new BubblePanel(PRIMARY_SOFT, new Color(194, 235, 210), RADIUS_MD);
         panel.setLayout(new BorderLayout(SPACE_MD, 0));
         panel.setBorder(pad(SPACE_SM, SPACE_MD, SPACE_SM, SPACE_MD));
         panel.setVisible(false);
@@ -563,7 +571,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         icon.setForeground(PRIMARY_DARK);
         icon.setHorizontalAlignment(SwingConstants.CENTER);
         icon.setPreferredSize(new Dimension(48, 30));
-        icon.setBorder(new RoundedBorder(new Color(147, 197, 253), RADIUS_SM));
+        icon.setBorder(new RoundedBorder(new Color(194, 235, 210), RADIUS_SM));
 
         JPanel textPanel = new JPanel();
         textPanel.setOpaque(false);
@@ -637,6 +645,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         JScrollPane scroll = new JScrollPane(component);
         scroll.setBorder(null);
         scroll.getViewport().setBackground(background);
+        scroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
         scroll.getVerticalScrollBar().setUnitIncrement(18);
         scroll.getHorizontalScrollBar().setUnitIncrement(18);
         return scroll;
@@ -671,9 +680,9 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private void styleTextField(JTextField field) {
         field.setFont(UI_FONT);
         field.setForeground(TEXT);
-        field.setBackground(Color.WHITE);
+        field.setBackground(SURFACE_SOFT);
         field.setCaretColor(PRIMARY_DARK);
-        field.setBorder(new CompoundBorder(new RoundedBorder(BORDER, RADIUS_MD), pad(8, 11, 8, 11)));
+        field.setBorder(new CompoundBorder(new RoundedBorder(SURFACE_SOFT, RADIUS_MD), pad(8, 11, 8, 11)));
         field.setPreferredSize(new Dimension(field.getPreferredSize().width, INPUT_HEIGHT));
     }
 
@@ -2387,7 +2396,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             titleRow.setOpaque(false);
             JLabel title = new JLabel("朋友圈");
             title.setFont(PAGE_TITLE_FONT);
-            title.setForeground(Color.WHITE);
+            title.setForeground(TEXT);
             JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, SPACE_SM, 0));
             actions.setOpaque(false);
             JButton refreshButton = smallButton("刷新");
@@ -2419,10 +2428,10 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             textBlock.setLayout(new BoxLayout(textBlock, BoxLayout.Y_AXIS));
             JLabel name = new JLabel(currentProfile.getProperty("displayName", currentUser));
             name.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 16));
-            name.setForeground(Color.WHITE);
+            name.setForeground(TEXT);
             JLabel signature = new JLabel(currentProfile.getProperty("signature", "这个人还没有写个性签名。"));
             signature.setFont(UI_FONT_SMALL);
-            signature.setForeground(new Color(226, 232, 240));
+            signature.setForeground(MUTED);
             textBlock.add(name);
             textBlock.add(Box.createVerticalStrut(SPACE_XS));
             textBlock.add(signature);
@@ -3128,11 +3137,11 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                 setForeground(SOFT_MUTED);
             } else if(primary) {
                 fill = hover ? PRIMARY_DARK : PRIMARY;
-                stroke = PRIMARY_DARK;
+                stroke = fill;
                 setForeground(Color.WHITE);
             } else {
-                fill = hover ? PRIMARY_SOFT : SURFACE;
-                stroke = hover ? new Color(147, 197, 253) : BORDER_LIGHT;
+                fill = hover ? SURFACE_SOFT : SURFACE;
+                stroke = hover ? BORDER : BORDER_LIGHT;
                 setForeground(TEXT);
             }
             g2.setColor(fill);
@@ -3194,14 +3203,12 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         protected void paintComponent(Graphics g) {
             Graphics2D g2 = (Graphics2D)g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            GradientPaint paint = new GradientPaint(0, 0, PRIMARY_DARK,
-                    getWidth(), getHeight(), new Color(13, 148, 136));
-            g2.setPaint(paint);
+            g2.setColor(SURFACE);
             g2.fillRect(0, 0, getWidth(), getHeight());
-            g2.setColor(new Color(255, 255, 255, 32));
-            g2.fillRoundRect(getWidth() - 140, -30, 180, 180, 90, 90);
-            g2.setColor(new Color(255, 255, 255, 22));
-            g2.fillRoundRect(-40, getHeight() - 75, 150, 150, 80, 80);
+            g2.setColor(PRIMARY);
+            g2.fillRect(0, 0, 5, getHeight());
+            g2.setColor(BORDER_LIGHT);
+            g2.drawLine(0, getHeight() - 1, getWidth(), getHeight() - 1);
             g2.dispose();
             super.paintComponent(g);
         }
@@ -3246,7 +3253,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                 int memberCount = members == null ? 1 : members.size();
                 nameLabel.setText(groupName);
                 detailLabel.setText("群聊 · " + memberCount + " 人 · " + countOnlineMembers(members) + " 人在线");
-                stateDot.setForeground(new Color(13, 148, 136));
+                stateDot.setForeground(PRIMARY_DARK);
             } else {
                 nameLabel.setText(name);
                 if(friends.contains(name)) {
@@ -3269,7 +3276,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             hoverRow = index == hoveredConversationIndex;
             if(isSelected) {
                 nameLabel.setForeground(TEXT);
-                detailLabel.setForeground(PRIMARY_DARK);
+                detailLabel.setForeground(new Color(80, 80, 80));
             } else if(index == hoveredConversationIndex) {
                 nameLabel.setForeground(TEXT);
                 detailLabel.setForeground(MUTED);
@@ -3285,11 +3292,11 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             Graphics2D g2 = (Graphics2D)g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             if(selectedRow || hoverRow) {
-                g2.setColor(selectedRow ? PRIMARY_LIGHT : SURFACE_SOFT);
-                g2.fillRoundRect(2, 3, getWidth() - 4, getHeight() - 6, RADIUS_LG, RADIUS_LG);
+                g2.setColor(selectedRow ? SIDEBAR_SELECTED : SURFACE_SOFT);
+                g2.fillRoundRect(0, 3, getWidth(), getHeight() - 6, RADIUS_LG, RADIUS_LG);
                 if(selectedRow) {
-                    g2.setColor(new Color(147, 197, 253));
-                    g2.fillRoundRect(3, 13, 3, getHeight() - 26, 3, 3);
+                    g2.setColor(PRIMARY);
+                    g2.fillRoundRect(0, 13, 3, getHeight() - 26, 3, 3);
                 }
             }
             g2.dispose();
@@ -3395,7 +3402,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             text.setForeground(TEXT);
 
             JPanel bubble = new BubblePanel(outgoing ? OUTGOING_BUBBLE : INCOMING_BUBBLE,
-                    outgoing ? new Color(147, 197, 253) : BORDER_LIGHT,
+                    outgoing ? new Color(125, 211, 88) : BORDER_LIGHT,
                     RADIUS_LG);
             bubble.setLayout(new BorderLayout());
             bubble.setBorder(pad(10, 12, 10, 12));
@@ -3441,7 +3448,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             block.setLayout(new BoxLayout(block, BoxLayout.Y_AXIS));
 
             final BubblePanel card = new BubblePanel(outgoing ? OUTGOING_BUBBLE : INCOMING_BUBBLE,
-                    outgoing ? new Color(147, 197, 253) : BORDER_LIGHT,
+                    outgoing ? new Color(125, 211, 88) : BORDER_LIGHT,
                     RADIUS_LG);
             card.setLayout(new BorderLayout(SPACE_MD, 0));
             card.setBorder(pad(11, 12, 11, 12));
@@ -3450,10 +3457,10 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
             JLabel icon = new JLabel(mediaBadge(message.fileName));
             icon.setFont(new Font("Dialog", Font.BOLD, 11));
-            icon.setForeground(outgoing ? PRIMARY_DARK : new Color(15, 118, 110));
+            icon.setForeground(outgoing ? new Color(44, 112, 44) : MUTED);
             icon.setHorizontalAlignment(SwingConstants.CENTER);
             icon.setPreferredSize(new Dimension(50, 46));
-            icon.setBorder(new RoundedBorder(outgoing ? new Color(147, 197, 253) : BORDER, RADIUS_MD));
+            icon.setBorder(new RoundedBorder(outgoing ? new Color(125, 211, 88) : BORDER, RADIUS_MD));
 
             JPanel textPanel = new JPanel();
             textPanel.setOpaque(false);
@@ -3495,13 +3502,13 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             block.setLayout(new BoxLayout(block, BoxLayout.Y_AXIS));
 
             final BubblePanel card = new BubblePanel(outgoing ? OUTGOING_BUBBLE : INCOMING_BUBBLE,
-                    outgoing ? new Color(147, 197, 253) : BORDER_LIGHT,
+                    outgoing ? new Color(125, 211, 88) : BORDER_LIGHT,
                     RADIUS_LG);
             card.setLayout(new BorderLayout());
             card.setBorder(pad(SPACE_SM));
 
             JLabel imageLabel = new JLabel(imageIcon);
-            imageLabel.setBorder(new RoundedBorder(outgoing ? new Color(147, 197, 253) : BORDER, RADIUS_MD));
+            imageLabel.setBorder(new RoundedBorder(outgoing ? new Color(125, 211, 88) : BORDER, RADIUS_MD));
             card.add(imageLabel, BorderLayout.CENTER);
 
             JLabel meta = new JLabel(displayFileSize(message.fileSize)
@@ -3677,12 +3684,11 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         protected void paintComponent(Graphics g) {
             Graphics2D g2 = (Graphics2D)g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            Color start = outgoing ? PRIMARY : new Color(15, 118, 110);
-            Color end = outgoing ? new Color(96, 165, 250) : new Color(45, 212, 191);
-            g2.setPaint(new GradientPaint(0, 0, start, getWidth(), getHeight(), end));
-            g2.fillOval(1, 1, 34, 34);
-            g2.setColor(new Color(255, 255, 255, 90));
-            g2.drawOval(2, 2, 32, 32);
+            Color fill = outgoing ? PRIMARY : avatarColor(name);
+            g2.setColor(fill);
+            g2.fillRoundRect(1, 1, 34, 34, RADIUS_LG, RADIUS_LG);
+            g2.setColor(new Color(255, 255, 255, 70));
+            g2.drawRoundRect(2, 2, 32, 32, RADIUS_LG, RADIUS_LG);
             g2.setColor(Color.WHITE);
             g2.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 13));
             String text = avatarText(name);
@@ -3697,6 +3703,12 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             String trimmed = source.trim();
             if(trimmed.length() == 0) return "?";
             return trimmed.substring(0, 1).toUpperCase();
+        }
+
+        private Color avatarColor(String source) {
+            if(BROADCAST_CHAT.equals(source)) return PRIMARY;
+            int index = (source == null ? 0 : source.hashCode() & 0x7fffffff) % AVATAR_COLORS.length;
+            return AVATAR_COLORS[index];
         }
     }
 }
