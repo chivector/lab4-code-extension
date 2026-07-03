@@ -2109,13 +2109,27 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             String encoded = Base64.getEncoder().encodeToString(data);
             ck.sendMessage("/file " + target + " " + file.getName() + " " + encoded);
             appendLog("[file to " + target + "] " + file.getName() + " (" + data.length + " bytes)");
-            historyWindow.addMessage(ChatMessage.file(MessageKind.OUTGOING, ownNick(),
-                    file.getName(), data.length, data, LocalDateTime.now().format(displayTime)));
+            showOutgoingFileMessage(target, file.getName(), data);
             return true;
         } catch(Exception e) {
             addMsg("<font color=\"#ff0000\">文件发送失败：" + escapeHtml(e.getMessage()) + "</font>");
             return false;
         }
+    }
+
+    private void showOutgoingFileMessage(final String target, final String fileName, final byte[] data) {
+        final String sender = ownNick() + " → " + target;
+        final String time = LocalDateTime.now().format(displayTime);
+        Runnable show = new Runnable() {
+            public void run() {
+                if(historyWindow != null) {
+                    historyWindow.addMessage(ChatMessage.file(MessageKind.OUTGOING, sender,
+                            fileName, data.length, data, time));
+                }
+            }
+        };
+        if(SwingUtilities.isEventDispatchThread()) show.run();
+        else SwingUtilities.invokeLater(show);
     }
 
     private void rebuildConversationList(String preferredSelection) {

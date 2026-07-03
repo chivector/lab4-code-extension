@@ -32,6 +32,8 @@ screenshots/            演示截图
 javac -encoding UTF-8 com/cncd/ch04/server/*.java com/cncd/ch04/client/*.java com/cncd/ch04/ChatExperimentRunner.java
 ```
 
+每次修改 `.java` 后都需要重新编译，否则 `java -cp . ...` 会继续运行旧的 `.class` 文件。
+
 启动服务端：
 
 ```bash
