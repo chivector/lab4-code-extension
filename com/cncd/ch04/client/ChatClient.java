@@ -2,6 +2,7 @@ package com.cncd.ch04.client;
 
 import javax.swing.*;
 import javax.swing.border.*;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.imageio.ImageIO;
 import java.awt.*;
 import java.awt.event.*;
@@ -88,6 +89,15 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             "\uD83C\uDF1F", "\uD83C\uDF81", "\u2615", "\uD83C\uDF70",
             "\uD83C\uDF39", "\uD83E\uDD73", "\uD83D\uDE0B", "\uD83D\uDE44"
     };
+    private static final String[] IMAGE_EXTENSIONS = {
+            ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"
+    };
+    private static final String[] AUDIO_EXTENSIONS = {
+            ".mp3", ".wav", ".aac", ".flac", ".m4a", ".ogg", ".wma", ".amr", ".opus"
+    };
+    private static final String[] VIDEO_EXTENSIONS = {
+            ".mp4", ".avi", ".mov", ".mkv", ".wmv", ".webm"
+    };
     private static final Color[] AVATAR_COLORS = {
             new Color(7, 193, 96), new Color(87, 107, 149), new Color(238, 153, 71),
             new Color(93, 156, 236), new Color(155, 89, 182), new Color(80, 180, 170)
@@ -96,13 +106,14 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     JPanel northPanel, southPanel, eastPanel;
     JTextField txtHost, txtPort, txtNick;
     JTextArea msgWindow;
-    JButton buttonConnect, buttonSend, buttonRefresh, buttonAddFriend, buttonFile, buttonEmoji, buttonLog;
+    JButton buttonConnect, buttonSend, buttonRefresh, buttonAddFriend;
+    JButton buttonFile, buttonImage, buttonVoice, buttonEmoji, buttonLog;
     JButton buttonCreateGroup;
     JButton buttonProfile, buttonMoments;
     JLabel statusLabel, conversationTitleLabel, conversationSubtitleLabel;
     JLabel sidebarNameLabel, sidebarSignatureLabel;
     JPanel attachmentPanel;
-    JLabel attachmentNameLabel, attachmentMetaLabel;
+    JLabel attachmentIconLabel, attachmentNameLabel, attachmentMetaLabel;
     JButton buttonRemoveAttachment;
     AvatarView conversationAvatar, sidebarAvatar;
     JTextField conversationSearchField;
@@ -522,6 +533,16 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         buttonEmoji.setToolTipText("插入表情");
         buttonEmoji.setBorder(pad(4, 0, 4, 0));
         buttonEmoji.setPreferredSize(new Dimension(42, 34));
+        buttonImage = createButton("图", false);
+        buttonImage.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 14));
+        buttonImage.setToolTipText("发送图片");
+        buttonImage.setBorder(pad(4, 0, 4, 0));
+        buttonImage.setPreferredSize(new Dimension(42, 34));
+        buttonVoice = createButton("语", false);
+        buttonVoice.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 14));
+        buttonVoice.setToolTipText("发送语音文件");
+        buttonVoice.setBorder(pad(4, 0, 4, 0));
+        buttonVoice.setPreferredSize(new Dimension(42, 34));
         buttonFile = createButton("+", false);
         buttonFile.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 18));
         buttonFile.setToolTipText("选择本地文件");
@@ -529,6 +550,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         buttonFile.setPreferredSize(new Dimension(42, 34));
         buttonSend.addActionListener(this);
         buttonEmoji.addActionListener(this);
+        buttonImage.addActionListener(this);
+        buttonVoice.addActionListener(this);
         buttonFile.addActionListener(this);
         buttonFile.setEnabled(true);
         buttonSend.setEnabled(false);
@@ -541,6 +564,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         JPanel inputTools = new JPanel(new FlowLayout(FlowLayout.LEFT, SPACE_SM, 0));
         inputTools.setOpaque(false);
         inputTools.add(buttonEmoji);
+        inputTools.add(buttonImage);
+        inputTools.add(buttonVoice);
         inputTools.add(buttonFile);
         toolbar.add(inputTools, BorderLayout.WEST);
 
@@ -568,12 +593,12 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         panel.setBorder(pad(SPACE_SM, SPACE_MD, SPACE_SM, SPACE_MD));
         panel.setVisible(false);
 
-        JLabel icon = new JLabel("文件");
-        icon.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 12));
-        icon.setForeground(PRIMARY_DARK);
-        icon.setHorizontalAlignment(SwingConstants.CENTER);
-        icon.setPreferredSize(new Dimension(48, 30));
-        icon.setBorder(new RoundedBorder(new Color(194, 235, 210), RADIUS_SM));
+        attachmentIconLabel = new JLabel("文件");
+        attachmentIconLabel.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 12));
+        attachmentIconLabel.setForeground(PRIMARY_DARK);
+        attachmentIconLabel.setHorizontalAlignment(SwingConstants.CENTER);
+        attachmentIconLabel.setPreferredSize(new Dimension(48, 30));
+        attachmentIconLabel.setBorder(new RoundedBorder(new Color(194, 235, 210), RADIUS_SM));
 
         JPanel textPanel = new JPanel();
         textPanel.setOpaque(false);
@@ -596,7 +621,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             }
         });
 
-        panel.add(icon, BorderLayout.WEST);
+        panel.add(attachmentIconLabel, BorderLayout.WEST);
         panel.add(textPanel, BorderLayout.CENTER);
         panel.add(buttonRemoveAttachment, BorderLayout.EAST);
         return panel;
@@ -1952,6 +1977,24 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     }
 
     private void chooseAndSendFile() {
+        chooseAttachment("选择本地文件", null, null);
+    }
+
+    private void chooseAndSendImage() {
+        chooseAttachment("选择图片",
+                new FileNameExtensionFilter("图片文件 (*.png, *.jpg, *.jpeg, *.gif, *.bmp, *.webp)",
+                        "png", "jpg", "jpeg", "gif", "bmp", "webp"),
+                "图片");
+    }
+
+    private void chooseAndSendVoice() {
+        chooseAttachment("选择语音文件",
+                new FileNameExtensionFilter("语音文件 (*.mp3, *.wav, *.aac, *.flac, *.m4a, *.ogg, *.wma, *.amr, *.opus)",
+                        "mp3", "wav", "aac", "flac", "m4a", "ogg", "wma", "amr", "opus"),
+                "语音");
+    }
+
+    private void chooseAttachment(String title, FileNameExtensionFilter filter, String requiredType) {
         if(ck == null || !ck.isConnected()) {
             addMsg("<font color=\"#ff0000\">请先连接服务器后再发送文件。</font>");
             return;
@@ -1979,16 +2022,33 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             return;
         }
         JFileChooser chooser = new JFileChooser();
-        chooser.setDialogTitle("选择本地文件");
+        chooser.setDialogTitle(title);
         chooser.setCurrentDirectory(new File(System.getProperty("user.home"), "Desktop"));
+        if(filter != null) {
+            chooser.setFileFilter(filter);
+            chooser.setAcceptAllFileFilterUsed(false);
+        }
         if(chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
             File file = chooser.getSelectedFile();
-            if(validateAttachment(file)) {
+            if(validateAttachment(file) && validateAttachmentType(file, requiredType)) {
                 pendingFile = file;
                 updateAttachmentPreview();
                 msgWindow.requestFocusInWindow();
             }
         }
+    }
+
+    private boolean validateAttachmentType(File file, String requiredType) {
+        if(requiredType == null) return true;
+        if("图片".equals(requiredType) && !hasExtension(file.getName(), IMAGE_EXTENSIONS)) {
+            addMsg("<font color=\"#ff0000\">请选择图片文件：png、jpg、jpeg、gif、bmp 或 webp。</font>");
+            return false;
+        }
+        if("语音".equals(requiredType) && !hasExtension(file.getName(), AUDIO_EXTENSIONS)) {
+            addMsg("<font color=\"#ff0000\">请选择语音文件：mp3、wav、aac、flac、m4a、ogg、wma、amr 或 opus。</font>");
+            return false;
+        }
+        return true;
     }
 
     private boolean validateAttachment(File file) {
@@ -2010,8 +2070,10 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             attachmentPanel.setVisible(false);
         } else {
             String target = getSelectedPrivateTarget();
+            String type = attachmentTypeLabel(pendingFile.getName());
+            if(attachmentIconLabel != null) attachmentIconLabel.setText(type);
             attachmentNameLabel.setText(pendingFile.getName());
-            attachmentMetaLabel.setText(displayFileSize(pendingFile.length()) + " · "
+            attachmentMetaLabel.setText(type + " · " + displayFileSize(pendingFile.length()) + " · "
                     + (target == null ? "请选择联系人后发送" : "发送给 " + target));
             attachmentPanel.setVisible(true);
         }
@@ -2039,6 +2101,21 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         if(bytes < 1024) return bytes + " B";
         if(bytes < 1024 * 1024) return String.format(Locale.US, "%.1f KB", bytes / 1024.0);
         return String.format(Locale.US, "%.1f MB", bytes / 1024.0 / 1024.0);
+    }
+
+    private String attachmentTypeLabel(String name) {
+        if(hasExtension(name, IMAGE_EXTENSIONS)) return "图片";
+        if(hasExtension(name, AUDIO_EXTENSIONS)) return "语音";
+        if(hasExtension(name, VIDEO_EXTENSIONS)) return "视频";
+        return "文件";
+    }
+
+    private static boolean hasExtension(String name, String[] extensions) {
+        String lower = name == null ? "" : name.toLowerCase(Locale.ROOT);
+        for(int i=0;i<extensions.length;i++) {
+            if(lower.endsWith(extensions[i])) return true;
+        }
+        return false;
     }
 
     private void sendFileCommand(String command) {
@@ -2308,6 +2385,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         if(e.getSource()==buttonAddFriend) addSelectedFriend();
         if(e.getSource()==buttonCreateGroup) showCreateGroupDialog();
         if(e.getSource()==buttonEmoji) showEmojiPicker();
+        if(e.getSource()==buttonImage) chooseAndSendImage();
+        if(e.getSource()==buttonVoice) chooseAndSendVoice();
         if(e.getSource()==buttonFile) chooseAndSendFile();
         if(e.getSource()==buttonProfile) showProfileDialog();
         if(e.getSource()==buttonMoments) showMomentsDialog();
@@ -3597,37 +3676,27 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
 
         private boolean isImageFile(String name) {
-            String lower = extensionSource(name);
-            return lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg")
-                    || lower.endsWith(".gif") || lower.endsWith(".bmp") || lower.endsWith(".webp");
+            return hasExtension(name, IMAGE_EXTENSIONS);
         }
 
         private boolean isAudioFile(String name) {
-            String lower = extensionSource(name);
-            return lower.endsWith(".mp3") || lower.endsWith(".wav") || lower.endsWith(".aac")
-                    || lower.endsWith(".flac") || lower.endsWith(".m4a") || lower.endsWith(".ogg");
+            return hasExtension(name, AUDIO_EXTENSIONS);
         }
 
         private boolean isVideoFile(String name) {
-            String lower = extensionSource(name);
-            return lower.endsWith(".mp4") || lower.endsWith(".avi") || lower.endsWith(".mov")
-                    || lower.endsWith(".mkv") || lower.endsWith(".wmv") || lower.endsWith(".webm");
+            return hasExtension(name, VIDEO_EXTENSIONS);
         }
 
         private String mediaBadge(String name) {
             if(isImageFile(name)) return "图片";
-            if(isAudioFile(name)) return "音频";
+            if(isAudioFile(name)) return "语音";
             if(isVideoFile(name)) return "视频";
             return "文件";
         }
 
-        private String extensionSource(String name) {
-            return name == null ? "" : name.toLowerCase(Locale.ROOT);
-        }
-
         private String fileStatusText(ChatMessage message, boolean outgoing) {
             String type = "文件";
-            if(isAudioFile(message.fileName)) type = "音频";
+            if(isAudioFile(message.fileName)) type = "语音";
             if(isVideoFile(message.fileName)) type = "视频";
             if(isImageFile(message.fileName)) type = "图片";
             if(outgoing) return type + " · " + displayFileSize(message.fileSize) + " · 已发送";
