@@ -2052,8 +2052,22 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
     private void sendPrivate(String target, String message) {
         ck.sendMessage("/msg " + target + " " + message);
-        addMsg("<font color=\"#666666\">[private to " + escapeHtml(target) + "] "
-                + escapeHtml(message) + "</font>");
+        showOutgoingTextMessage("发给 " + target, message);
+        appendLog("[private to " + target + "] " + message);
+    }
+
+    private void showOutgoingTextMessage(final String sender, final String message) {
+        final String time = LocalDateTime.now().format(displayTime);
+        Runnable show = new Runnable() {
+            public void run() {
+                if(historyWindow != null) {
+                    historyWindow.addMessage(new ChatMessage(MessageKind.OUTGOING,
+                            sender, message, time));
+                }
+            }
+        };
+        if(SwingUtilities.isEventDispatchThread()) show.run();
+        else SwingUtilities.invokeLater(show);
     }
 
     private boolean sendGroupMessage(String groupName, String message) {
