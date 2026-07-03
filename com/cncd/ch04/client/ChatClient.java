@@ -4,6 +4,7 @@ import javax.swing.*;
 import javax.swing.border.*;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.imageio.ImageIO;
+import javax.sound.sampled.*;
 import java.awt.*;
 import java.awt.event.*;
 import java.io.*;
@@ -107,7 +108,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     JTextField txtHost, txtPort, txtNick;
     JTextArea msgWindow;
     JButton buttonConnect, buttonSend, buttonRefresh, buttonAddFriend;
-    JButton buttonFile, buttonImage, buttonVoice, buttonEmoji, buttonLog;
+    JButton buttonFile, buttonImage, buttonVoice, buttonRecord, buttonEmoji, buttonLog;
     JButton buttonCreateGroup;
     JButton buttonProfile, buttonMoments;
     JLabel statusLabel, conversationTitleLabel, conversationSubtitleLabel;
@@ -543,6 +544,11 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         buttonVoice.setToolTipText("发送语音文件");
         buttonVoice.setBorder(pad(4, 0, 4, 0));
         buttonVoice.setPreferredSize(new Dimension(42, 34));
+        buttonRecord = createButton("录", false);
+        buttonRecord.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 14));
+        buttonRecord.setToolTipText("录制一段语音并发送");
+        buttonRecord.setBorder(pad(4, 0, 4, 0));
+        buttonRecord.setPreferredSize(new Dimension(42, 34));
         buttonFile = createButton("+", false);
         buttonFile.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 18));
         buttonFile.setToolTipText("选择本地文件");
@@ -552,6 +558,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         buttonEmoji.addActionListener(this);
         buttonImage.addActionListener(this);
         buttonVoice.addActionListener(this);
+        buttonRecord.addActionListener(this);
         buttonFile.addActionListener(this);
         buttonFile.setEnabled(true);
         buttonSend.setEnabled(false);
@@ -566,6 +573,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         inputTools.add(buttonEmoji);
         inputTools.add(buttonImage);
         inputTools.add(buttonVoice);
+        inputTools.add(buttonRecord);
         inputTools.add(buttonFile);
         toolbar.add(inputTools, BorderLayout.WEST);
 
@@ -1995,32 +2003,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     }
 
     private void chooseAttachment(String title, FileNameExtensionFilter filter, String requiredType) {
-        if(ck == null || !ck.isConnected()) {
-            addMsg("<font color=\"#ff0000\">请先连接服务器后再发送文件。</font>");
-            return;
-        }
-        String selected = onlineList == null ? null : onlineList.getSelectedValue();
-        if(selected == null) {
-            addMsg("<font color=\"#ff0000\">请先从左侧选择一个在线好友。</font>");
-            return;
-        }
-        if(isBroadcastConversation(selected)) {
-            addMsg("<font color=\"#ff0000\">广播暂不支持发送文件，请选择一个在线好友私聊。</font>");
-            return;
-        }
-        if(isGroupConversation(selected)) {
-            addMsg("<font color=\"#ff0000\">群聊暂不支持文件群发，请选择一个在线好友私聊。</font>");
-            return;
-        }
-        String target = getSelectedPrivateTarget();
-        if(target == null || target.length() == 0) {
-            addMsg("<font color=\"#ff0000\">请选择一个在线好友后再发送文件。</font>");
-            return;
-        }
-        if(!visibleUsers.contains(target)) {
-            addMsg("<font color=\"#ff0000\">对方当前离线，暂不能发送文件。</font>");
-            return;
-        }
+        String target = requireOnlinePrivateTarget("发送文件");
+        if(target == null) return;
         JFileChooser chooser = new JFileChooser();
         chooser.setDialogTitle(title);
         chooser.setCurrentDirectory(new File(System.getProperty("user.home"), "Desktop"));
@@ -2036,6 +2020,47 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                 msgWindow.requestFocusInWindow();
             }
         }
+    }
+
+    private void recordAndSendVoice() {
+        String target = requireOnlinePrivateTarget("录制语音");
+        if(target == null) return;
+        VoiceRecorderDialog dialog = new VoiceRecorderDialog(this, target);
+        dialog.setVisible(true);
+        File voiceFile = dialog.getVoiceFileToSend();
+        if(voiceFile != null && validateAttachment(voiceFile)) {
+            sendFileTo(target, voiceFile);
+        }
+    }
+
+    private String requireOnlinePrivateTarget(String action) {
+        if(ck == null || !ck.isConnected()) {
+            addMsg("<font color=\"#ff0000\">请先连接服务器后再" + action + "。</font>");
+            return null;
+        }
+        String selected = onlineList == null ? null : onlineList.getSelectedValue();
+        if(selected == null) {
+            addMsg("<font color=\"#ff0000\">请先从左侧选择一个在线好友。</font>");
+            return null;
+        }
+        if(isBroadcastConversation(selected)) {
+            addMsg("<font color=\"#ff0000\">广播暂不支持" + action + "，请选择一个在线好友私聊。</font>");
+            return null;
+        }
+        if(isGroupConversation(selected)) {
+            addMsg("<font color=\"#ff0000\">群聊暂不支持" + action + "，请选择一个在线好友私聊。</font>");
+            return null;
+        }
+        String target = getSelectedPrivateTarget();
+        if(target == null || target.length() == 0) {
+            addMsg("<font color=\"#ff0000\">请选择一个在线好友后再" + action + "。</font>");
+            return null;
+        }
+        if(!visibleUsers.contains(target)) {
+            addMsg("<font color=\"#ff0000\">对方当前离线，暂不能" + action + "。</font>");
+            return null;
+        }
+        return target;
     }
 
     private boolean validateAttachmentType(File file, String requiredType) {
@@ -2116,6 +2141,21 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             if(lower.endsWith(extensions[i])) return true;
         }
         return false;
+    }
+
+    private AudioFormat voiceFormat() {
+        return new AudioFormat(AudioFormat.Encoding.PCM_SIGNED,
+                16000.0f, 16, 1, 2, 16000.0f, false);
+    }
+
+    private File createVoiceMessageFile() throws IOException {
+        Path dir = currentUserDir != null
+                ? currentUserDir.resolve("voice")
+                : Paths.get(System.getProperty("java.io.tmpdir"), "cncd-chat-voice");
+        Files.createDirectories(dir);
+        String name = "voice_" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"))
+                + "_" + UUID.randomUUID().toString().substring(0, 8) + ".wav";
+        return dir.resolve(name).toFile();
     }
 
     private void sendFileCommand(String command) {
@@ -2387,6 +2427,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         if(e.getSource()==buttonEmoji) showEmojiPicker();
         if(e.getSource()==buttonImage) chooseAndSendImage();
         if(e.getSource()==buttonVoice) chooseAndSendVoice();
+        if(e.getSource()==buttonRecord) recordAndSendVoice();
         if(e.getSource()==buttonFile) chooseAndSendFile();
         if(e.getSource()==buttonProfile) showProfileDialog();
         if(e.getSource()==buttonMoments) showMomentsDialog();
@@ -2861,6 +2902,317 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                 tipLabel.setText(text == null ? " " : text);
                 tipLabel.setForeground(SUCCESS);
             }
+        }
+    }
+
+    class VoiceRecorderDialog extends JDialog {
+        private final int maxRecordSeconds = 60;
+        private String target;
+        private JLabel statusLabel;
+        private JLabel timerLabel;
+        private JButton startButton;
+        private JButton stopButton;
+        private JButton sendButton;
+        private TargetDataLine line;
+        private Thread recordThread;
+        private File voiceFile;
+        private volatile boolean recording = false;
+        private volatile boolean saving = false;
+        private boolean sendRequested = false;
+        private boolean closeWhenSaved = false;
+        private boolean discardWhenSaved = false;
+        private long startedAt = 0;
+        private javax.swing.Timer elapsedTimer;
+
+        VoiceRecorderDialog(JFrame owner, String target) {
+            super(owner, "录制语音", true);
+            this.target = target;
+            setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
+            setResizable(false);
+            setSize(420, 260);
+            setLocationRelativeTo(owner);
+            setContentPane(createRecorderContent());
+            addWindowListener(new WindowAdapter() {
+                public void windowClosing(WindowEvent e) {
+                    cancelAndClose();
+                }
+            });
+        }
+
+        File getVoiceFileToSend() {
+            return sendRequested ? voiceFile : null;
+        }
+
+        private JPanel createRecorderContent() {
+            JPanel root = new JPanel(new BorderLayout(0, SPACE_LG));
+            root.setBackground(SURFACE);
+            root.setBorder(pad(SPACE_XL));
+
+            JPanel header = new JPanel();
+            header.setOpaque(false);
+            header.setLayout(new BoxLayout(header, BoxLayout.Y_AXIS));
+            JLabel title = new JLabel("语音消息");
+            title.setFont(PAGE_TITLE_FONT);
+            title.setForeground(TEXT);
+            JLabel subtitle = new JLabel("发送给 " + target + "，最长 " + maxRecordSeconds + " 秒");
+            subtitle.setFont(UI_FONT_SMALL);
+            subtitle.setForeground(MUTED);
+            header.add(title);
+            header.add(Box.createVerticalStrut(SPACE_XS));
+            header.add(subtitle);
+
+            JPanel center = new JPanel(new GridBagLayout());
+            center.setOpaque(false);
+            JPanel meter = new BubblePanel(PRIMARY_SOFT, BORDER_LIGHT, RADIUS_LG);
+            meter.setLayout(new BoxLayout(meter, BoxLayout.Y_AXIS));
+            meter.setBorder(pad(SPACE_LG, SPACE_XL, SPACE_LG, SPACE_XL));
+            timerLabel = new JLabel("00:00");
+            timerLabel.setFont(new Font("Dialog", Font.BOLD, 32));
+            timerLabel.setForeground(PRIMARY_DARK);
+            timerLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+            statusLabel = new JLabel("点击开始录音");
+            statusLabel.setFont(UI_FONT_SMALL);
+            statusLabel.setForeground(MUTED);
+            statusLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+            meter.add(timerLabel);
+            meter.add(Box.createVerticalStrut(SPACE_SM));
+            meter.add(statusLabel);
+            center.add(meter);
+
+            JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, SPACE_SM, 0));
+            actions.setOpaque(false);
+            startButton = createButton("开始录音", true);
+            stopButton = createButton("停止", false);
+            sendButton = createButton("发送", true);
+            JButton cancelButton = createButton("取消", false);
+            startButton.setPreferredSize(new Dimension(96, BUTTON_HEIGHT));
+            stopButton.setPreferredSize(new Dimension(72, BUTTON_HEIGHT));
+            sendButton.setPreferredSize(new Dimension(72, BUTTON_HEIGHT));
+            cancelButton.setPreferredSize(new Dimension(72, BUTTON_HEIGHT));
+            stopButton.setEnabled(false);
+            sendButton.setEnabled(false);
+            startButton.addActionListener(new ActionListener() {
+                public void actionPerformed(ActionEvent e) {
+                    startRecording();
+                }
+            });
+            stopButton.addActionListener(new ActionListener() {
+                public void actionPerformed(ActionEvent e) {
+                    stopRecording();
+                }
+            });
+            sendButton.addActionListener(new ActionListener() {
+                public void actionPerformed(ActionEvent e) {
+                    if(saving || voiceFile == null || !voiceFile.exists()) return;
+                    sendRequested = true;
+                    dispose();
+                }
+            });
+            cancelButton.addActionListener(new ActionListener() {
+                public void actionPerformed(ActionEvent e) {
+                    cancelAndClose();
+                }
+            });
+            actions.add(startButton);
+            actions.add(stopButton);
+            actions.add(sendButton);
+            actions.add(cancelButton);
+
+            root.add(header, BorderLayout.NORTH);
+            root.add(center, BorderLayout.CENTER);
+            root.add(actions, BorderLayout.SOUTH);
+            return root;
+        }
+
+        private void startRecording() {
+            if(saving) return;
+            try {
+                cleanupVoiceFile();
+                closeWhenSaved = false;
+                discardWhenSaved = false;
+                AudioFormat format = voiceFormat();
+                DataLine.Info info = new DataLine.Info(TargetDataLine.class, format);
+                if(!AudioSystem.isLineSupported(info)) {
+                    setError("当前系统不支持麦克风录音格式。");
+                    return;
+                }
+                line = (TargetDataLine)AudioSystem.getLine(info);
+                line.open(format);
+                line.start();
+                voiceFile = createVoiceMessageFile();
+                final File outputFile = voiceFile;
+                final AudioInputStream stream = new AudioInputStream(line);
+                recording = true;
+                saving = false;
+                sendRequested = false;
+                recordThread = new Thread(new Runnable() {
+                    public void run() {
+                        try {
+                            AudioSystem.write(stream, AudioFileFormat.Type.WAVE, outputFile);
+                        } catch(IOException ioe) {
+                            if(recording || saving) setErrorLater("录音保存失败：" + ioe.getMessage());
+                        } finally {
+                            try {
+                                stream.close();
+                            } catch(IOException ioe) {
+                            }
+                        }
+                    }
+                }, "voice-recorder");
+                recordThread.setDaemon(true);
+                recordThread.start();
+                startedAt = System.currentTimeMillis();
+                startButton.setEnabled(false);
+                stopButton.setEnabled(true);
+                sendButton.setEnabled(false);
+                statusLabel.setText("正在录音...");
+                statusLabel.setForeground(PRIMARY_DARK);
+                startTimer();
+            } catch(Exception e) {
+                setError("无法开始录音：" + e.getMessage());
+                recording = false;
+                saving = false;
+                if(elapsedTimer != null) elapsedTimer.stop();
+                try {
+                    if(line != null) {
+                        line.stop();
+                        line.close();
+                    }
+                } catch(Exception closeError) {
+                }
+                line = null;
+            }
+        }
+
+        private void stopRecording() {
+            if(saving) return;
+            if(!recording && line == null) return;
+            recording = false;
+            saving = true;
+            if(elapsedTimer != null) elapsedTimer.stop();
+            try {
+                if(line != null) {
+                    line.stop();
+                    line.close();
+                }
+            } catch(Exception e) {}
+            line = null;
+            stopButton.setEnabled(false);
+            startButton.setEnabled(false);
+            sendButton.setEnabled(false);
+            statusLabel.setText("正在保存录音...");
+            waitForRecorderThread();
+        }
+
+        private void waitForRecorderThread() {
+            final Thread thread = recordThread;
+            Thread joinThread = new Thread(new Runnable() {
+                public void run() {
+                    try {
+                        if(thread != null) thread.join();
+                    } catch(InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                    }
+                    SwingUtilities.invokeLater(new Runnable() {
+                        public void run() {
+                            saving = false;
+                            recordThread = null;
+                            if(discardWhenSaved) cleanupVoiceFile();
+                            if(closeWhenSaved) {
+                                closeWhenSaved = false;
+                                discardWhenSaved = false;
+                                dispose();
+                                return;
+                            }
+                            closeWhenSaved = false;
+                            discardWhenSaved = false;
+                            startButton.setEnabled(true);
+                            if(voiceFile != null && voiceFile.exists() && voiceFile.length() > 44) {
+                                sendButton.setEnabled(true);
+                                statusLabel.setText("录音完成：" + displayFileSize(voiceFile.length()));
+                                statusLabel.setForeground(SUCCESS);
+                            } else {
+                                sendButton.setEnabled(false);
+                                statusLabel.setText("录音太短，请重新录制。");
+                                statusLabel.setForeground(DANGER);
+                                cleanupVoiceFile();
+                            }
+                        }
+                    });
+                }
+            }, "voice-recorder-join");
+            joinThread.setDaemon(true);
+            joinThread.start();
+        }
+
+        private void startTimer() {
+            if(elapsedTimer != null) elapsedTimer.stop();
+            elapsedTimer = new javax.swing.Timer(500, new ActionListener() {
+                public void actionPerformed(ActionEvent e) {
+                    long elapsed = (System.currentTimeMillis() - startedAt) / 1000;
+                    timerLabel.setText(formatElapsed(elapsed));
+                    if(elapsed >= maxRecordSeconds) {
+                        statusLabel.setText("已达到最长录音时间。");
+                        stopRecording();
+                    }
+                }
+            });
+            elapsedTimer.start();
+        }
+
+        private String formatElapsed(long seconds) {
+            return String.format(Locale.US, "%02d:%02d", seconds / 60, seconds % 60);
+        }
+
+        private void cancelAndClose() {
+            sendRequested = false;
+            closeWhenSaved = true;
+            discardWhenSaved = true;
+            if(recording || line != null) {
+                startButton.setEnabled(false);
+                stopButton.setEnabled(false);
+                sendButton.setEnabled(false);
+                statusLabel.setText("正在取消录音...");
+                stopRecording();
+                return;
+            }
+            if(saving) {
+                startButton.setEnabled(false);
+                stopButton.setEnabled(false);
+                sendButton.setEnabled(false);
+                statusLabel.setText("正在取消录音...");
+                return;
+            }
+            cleanupVoiceFile();
+            closeWhenSaved = false;
+            discardWhenSaved = false;
+            dispose();
+        }
+
+        private void cleanupVoiceFile() {
+            if(voiceFile != null && !sendRequested && voiceFile.exists()) {
+                try {
+                    voiceFile.delete();
+                } catch(Exception e) {}
+            }
+            voiceFile = null;
+        }
+
+        private void setError(String text) {
+            statusLabel.setText(text);
+            statusLabel.setForeground(DANGER);
+            startButton.setEnabled(true);
+            stopButton.setEnabled(false);
+            sendButton.setEnabled(false);
+            saving = false;
+        }
+
+        private void setErrorLater(final String text) {
+            SwingUtilities.invokeLater(new Runnable() {
+                public void run() {
+                    setError(text);
+                }
+            });
         }
     }
 
