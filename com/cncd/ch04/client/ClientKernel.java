@@ -100,6 +100,8 @@ public class ClientKernel {
                 } else if(str.startsWith(ChatClient.FILE_PREFIX)) {
                     String[] parts = str.split("\\|", 4);
                     if(parts.length == 4) chatClient.receiveFile(parts[1], parts[2], parts[3]);
+                } else if(str.startsWith(ChatClient.SERVER_MOMENT_ITEM_PREFIX)) {
+                    chatClient.receiveServerMoment(str.substring(ChatClient.SERVER_MOMENT_ITEM_PREFIX.length()));
                 } else {
                     chatClient.addMsg(str);
                 }

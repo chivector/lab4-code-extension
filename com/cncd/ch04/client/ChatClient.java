@@ -20,6 +20,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     public static final String nickText = "YourName";
     public static final String USERS_PREFIX = "__USERS__|";
     public static final String FILE_PREFIX = "__FILE__|";
+    public static final String SERVER_MOMENT_ITEM_PREFIX = "__SERVER_MOMENT__|";
     private static final String FRIEND_REQUEST_PREFIX = "__FRIEND_REQ__|";
     private static final String FRIEND_ACCEPT_PREFIX = "__FRIEND_ACCEPT__|";
     private static final String FRIEND_REJECT_PREFIX = "__FRIEND_REJECT__|";
@@ -920,6 +921,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                 setTitle(appName + " - " + txtNick.getText());
                 addMsg("<font color=\"#008000\">connected! Local Port:" + ck.getLocalPort() + "</font>");
                 refreshUsers();
+                uploadOwnMomentsToServer();
             } else {
                 setConnectionStatus("连接失败，请检查服务端和端口", DANGER);
                 addMsg("<font color=\"#ff0000\">connect failed!</font>");
@@ -1492,6 +1494,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                 LocalDateTime.now().format(logTime), currentUser, text);
         moments.add(moment);
         saveMoments(moments);
+        uploadMomentToServer(moment);
         broadcastMoment(moment);
         return moment;
     }
@@ -1509,7 +1512,10 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             }
         }
         saveMoments(moments);
-        if(deleted) broadcastMomentDelete(id);
+        if(deleted) {
+            deleteMomentFromServer(id);
+            broadcastMomentDelete(id);
+        }
     }
 
     private Moment toggleMomentLike(String id) {
@@ -1525,7 +1531,10 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             }
         }
         saveMoments(moments);
-        if(changed != null) broadcastMoment(changed);
+        if(changed != null) {
+            uploadMomentToServer(changed);
+            broadcastMoment(changed);
+        }
         return changed;
     }
 
@@ -1541,7 +1550,10 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             }
         }
         saveMoments(moments);
-        if(changed != null) broadcastMoment(changed);
+        if(changed != null) {
+            uploadMomentToServer(changed);
+            broadcastMoment(changed);
+        }
         return changed;
     }
 
@@ -1553,6 +1565,37 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             if(visibleUsers.contains(friend)) {
                 ck.sendMessage("/msg " + friend + " " + MOMENT_SYNC_REQUEST_PREFIX + ownNick());
             }
+        }
+    }
+
+    private void requestServerMoments() {
+        if(ck != null && ck.isConnected()) ck.sendMessage("/moment_list");
+    }
+
+    private void uploadOwnMomentsToServer() {
+        if(ck == null || !ck.isConnected()) return;
+        java.util.List<Moment> moments = loadMoments();
+        for(int i=0;i<moments.size();i++) {
+            Moment moment = moments.get(i);
+            if(moment.author.equalsIgnoreCase(currentUser)) uploadMomentToServer(moment);
+        }
+    }
+
+    private void uploadMomentToServer(Moment moment) {
+        if(ck != null && ck.isConnected() && moment != null) {
+            ck.sendMessage("/moment_put " + encodeToken(serializeMoment(moment)));
+        }
+    }
+
+    private void deleteMomentFromServer(String id) {
+        if(ck != null && ck.isConnected()) ck.sendMessage("/moment_delete " + encodeToken(id));
+    }
+
+    public void receiveServerMoment(String encodedMoment) {
+        Moment moment = parseModernMoment(decodeToken(encodedMoment));
+        if(moment != null && shouldAcceptMoment("server", moment)) {
+            upsertMoment(moment);
+            refreshActiveMoments();
         }
     }
 
@@ -2014,6 +2057,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             });
             setContentPane(createMomentsContent());
             refreshFeed();
+            requestServerMoments();
             requestFriendMoments();
         }
 

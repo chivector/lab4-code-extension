@@ -1,4 +1,7 @@
 package com.cncd.ch04.server;
+import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.*;
 import java.util.*;
 public class BroadcastCommandParser implements CommandParser {
     private final String NICK = "nick";
@@ -11,7 +14,11 @@ public class BroadcastCommandParser implements CommandParser {
     private final String MSG = "msg";
     private final String STATS = "stats";
     private final String FILE = "file";
+    private final String MOMENT_PUT = "moment_put";
+    private final String MOMENT_LIST = "moment_list";
+    private final String MOMENT_DELETE = "moment_delete";
     private final String HELP = "help";
+    private final String SERVER_MOMENT_PREFIX = "__SERVER_MOMENT__|";
         private final String tab = "&nbsp;&nbsp;&nbsp;";
     private DataSource ds;
     private final int sek = 1000;
@@ -47,6 +54,12 @@ public class BroadcastCommandParser implements CommandParser {
                     msg(cc, strTok.nextToken(), strTok);
                 else if(command.equalsIgnoreCase(FILE))
                     file(cc, strTok);
+                else if(command.equalsIgnoreCase(MOMENT_PUT))
+                    momentPut(cc, strTok);
+                else if(command.equalsIgnoreCase(MOMENT_LIST))
+                    momentList(cc);
+                else if(command.equalsIgnoreCase(MOMENT_DELETE))
+                    momentDelete(cc, strTok);
                 else if(command.equalsIgnoreCase(STATS))
                     stats(cc);
                 else if(command.equalsIgnoreCase(HELP))
@@ -72,6 +85,7 @@ public class BroadcastCommandParser implements CommandParser {
                 "/users - list online users<br>" +
                 "/msg &lt;user&gt; &lt;message&gt; - send private message<br>" +
                 "/file &lt;user&gt; &lt;filename&gt; &lt;base64&gt; - transfer file<br>" +
+                "/moment_list - sync moments history<br>" +
                 "/stats - show server running state<br>" +
                 "/whoami - show current connection info<br>" +
                 "/nick &lt;newNick&gt; - change nickname<br>" +
@@ -125,6 +139,91 @@ public class BroadcastCommandParser implements CommandParser {
         String data = strTok.nextToken();
         cc.sendTo(user, "__FILE__|" + cc.nick + "|" + filename + "|" + data);
         cc.sendMessage("Server: file " + filename + " sent to " + user);
+    }
+    private void momentPut(ConnectedClient cc, StringTokenizer strTok) {
+        if(!strTok.hasMoreTokens()) {
+            cc.sendMessage("usage: /moment_put <base64MomentRecord>");
+            return;
+        }
+        String encodedMoment = strTok.nextToken();
+        upsertMoment(encodedMoment);
+    }
+    private void momentList(ConnectedClient cc) {
+        java.util.List lines = readMomentLines();
+        for(int i=0;i<lines.size();i++) {
+            cc.sendMessage(SERVER_MOMENT_PREFIX + lines.get(i));
+        }
+    }
+    private void momentDelete(ConnectedClient cc, StringTokenizer strTok) {
+        if(!strTok.hasMoreTokens()) {
+            cc.sendMessage("usage: /moment_delete <base64MomentId>");
+            return;
+        }
+        String id = decodeToken(strTok.nextToken());
+        if(id.length() > 0) deleteMoment(id);
+    }
+    private synchronized void upsertMoment(String encodedMoment) {
+        String id = momentId(encodedMoment);
+        if(id.length() == 0) return;
+        java.util.List lines = readMomentLines();
+        boolean replaced = false;
+        for(int i=0;i<lines.size();i++) {
+            String line = (String)lines.get(i);
+            if(id.equals(momentId(line))) {
+                lines.set(i, encodedMoment);
+                replaced = true;
+                break;
+            }
+        }
+        if(!replaced) lines.add(encodedMoment);
+        writeMomentLines(lines);
+    }
+    private synchronized void deleteMoment(String id) {
+        java.util.List lines = readMomentLines();
+        Iterator it = lines.iterator();
+        while(it.hasNext()) {
+            String line = (String)it.next();
+            if(id.equals(momentId(line))) it.remove();
+        }
+        writeMomentLines(lines);
+    }
+    private Path momentFile() {
+        return Paths.get(System.getProperty("user.home"), ".mihalychat", "server", "moments.txt");
+    }
+    private java.util.List readMomentLines() {
+        try {
+            Path file = momentFile();
+            if(!Files.exists(file)) return new ArrayList();
+            return Files.readAllLines(file, StandardCharsets.UTF_8);
+        } catch(Exception e) {
+            return new ArrayList();
+        }
+    }
+    private void writeMomentLines(java.util.List lines) {
+        try {
+            Path file = momentFile();
+            Files.createDirectories(file.getParent());
+            Files.write(file, lines, StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+        } catch(Exception e) {
+            System.out.println("Moment store failed: " + e.getMessage());
+        }
+    }
+    private String momentId(String encodedMoment) {
+        try {
+            String raw = decodeToken(encodedMoment);
+            String[] parts = raw.split("\\t", -1);
+            if(parts.length >= 2 && "M2".equals(parts[0])) return parts[1];
+        } catch(Exception e) {
+        }
+        return "";
+    }
+    private String decodeToken(String value) {
+        try {
+            return new String(Base64.getDecoder().decode(value == null ? "" : value), StandardCharsets.UTF_8);
+        } catch(Exception e) {
+            return "";
+        }
     }
     private  void users(ConnectedClient cc) {
         cc.getConnectionKeeper().sendUserList(cc);
