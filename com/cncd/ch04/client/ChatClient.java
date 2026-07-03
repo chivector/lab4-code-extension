@@ -75,11 +75,22 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private static final Font UI_FONT_SMALL = new Font("Microsoft YaHei UI", Font.PLAIN, 12);
     private static final Font TITLE_FONT = new Font("Microsoft YaHei UI", Font.BOLD, 17);
     private static final Font PAGE_TITLE_FONT = new Font("Microsoft YaHei UI", Font.BOLD, 22);
+    private static final Font EMOJI_FONT = new Font("Segoe UI Emoji", Font.PLAIN, 18);
+    private static final String[] QUICK_EMOJIS = {
+            "\uD83D\uDE00", "\uD83D\uDE04", "\uD83D\uDE02", "\uD83D\uDE05",
+            "\uD83D\uDE0A", "\uD83D\uDE0D", "\uD83D\uDE18", "\uD83D\uDE0E",
+            "\uD83E\uDD14", "\uD83D\uDE34", "\uD83D\uDE22", "\uD83D\uDE2D",
+            "\uD83D\uDE21", "\uD83D\uDC4D", "\uD83D\uDC4F", "\uD83D\uDE4F",
+            "\uD83D\uDCAA", "\uD83D\uDC4C", "\uD83E\uDD1D", "\u2764\uFE0F",
+            "\uD83D\uDC94", "\uD83C\uDF89", "\uD83D\uDD25", "\u2728",
+            "\uD83C\uDF1F", "\uD83C\uDF81", "\u2615", "\uD83C\uDF70",
+            "\uD83C\uDF39", "\uD83E\uDD73", "\uD83D\uDE0B", "\uD83D\uDE44"
+    };
 
     JPanel northPanel, southPanel, eastPanel;
     JTextField txtHost, txtPort, txtNick;
     JTextArea msgWindow;
-    JButton buttonConnect, buttonSend, buttonRefresh, buttonAddFriend, buttonFile, buttonLog;
+    JButton buttonConnect, buttonSend, buttonRefresh, buttonAddFriend, buttonFile, buttonEmoji, buttonLog;
     JButton buttonCreateGroup;
     JButton buttonProfile, buttonMoments;
     JLabel statusLabel, conversationTitleLabel, conversationSubtitleLabel;
@@ -95,6 +106,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     JScrollPane sc;
     ClientKernel ck;
     ClientHistory historyWindow;
+    JPopupMenu emojiPopup;
     private String currentUser = "";
     private Properties currentProfile = new Properties();
     private Path currentUserDir;
@@ -505,18 +517,27 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         buttonSend = createButton("发送", true);
         buttonSend.setPreferredSize(new Dimension(76, 42));
         buttonSend.setToolTipText("发送消息 Enter");
+        buttonEmoji = createButton("\uD83D\uDE0A", false);
+        buttonEmoji.setFont(EMOJI_FONT);
+        buttonEmoji.setToolTipText("插入表情");
+        buttonEmoji.setPreferredSize(new Dimension(42, 42));
         buttonFile = createButton("+", false);
         buttonFile.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 18));
         buttonFile.setToolTipText("选择本地文件");
         buttonFile.setPreferredSize(new Dimension(42, 42));
         buttonSend.addActionListener(this);
+        buttonEmoji.addActionListener(this);
         buttonFile.addActionListener(this);
-        buttonFile.setEnabled(false);
+        buttonFile.setEnabled(true);
         buttonSend.setEnabled(false);
 
         JPanel inputRow = new JPanel(new BorderLayout(SPACE_SM, 0));
         inputRow.setOpaque(false);
-        inputRow.add(buttonFile, BorderLayout.WEST);
+        JPanel inputTools = new JPanel(new GridLayout(1, 2, SPACE_SM, 0));
+        inputTools.setOpaque(false);
+        inputTools.add(buttonEmoji);
+        inputTools.add(buttonFile);
+        inputRow.add(inputTools, BorderLayout.WEST);
         JScrollPane messageScroll = new JScrollPane(msgWindow);
         messageScroll.setBorder(new RoundedBorder(BORDER, RADIUS_LG));
         messageScroll.getViewport().setBackground(Color.WHITE);
@@ -687,6 +708,47 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         button.setPreferredSize(new Dimension(0, BUTTON_HEIGHT));
         button.setFont(UI_FONT_BOLD);
         return button;
+    }
+
+    private void showEmojiPicker() {
+        if(emojiPopup == null) emojiPopup = createEmojiPopup();
+        Dimension size = emojiPopup.getPreferredSize();
+        emojiPopup.show(buttonEmoji, 0, -size.height - SPACE_SM);
+    }
+
+    private JPopupMenu createEmojiPopup() {
+        final JPopupMenu popup = new JPopupMenu();
+        popup.setBorder(new CompoundBorder(
+                new RoundedBorder(BORDER, RADIUS_MD),
+                pad(SPACE_SM, SPACE_SM, SPACE_SM, SPACE_SM)));
+        JPanel grid = new JPanel(new GridLayout(0, 8, SPACE_XS, SPACE_XS));
+        grid.setBackground(Color.WHITE);
+        for(int i=0;i<QUICK_EMOJIS.length;i++) {
+            final String emoji = QUICK_EMOJIS[i];
+            JButton item = new JButton(emoji);
+            item.setFont(EMOJI_FONT);
+            item.setFocusPainted(false);
+            item.setContentAreaFilled(false);
+            item.setBorder(new RoundedBorder(BORDER_LIGHT, RADIUS_SM));
+            item.setPreferredSize(new Dimension(34, 34));
+            item.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            item.addActionListener(new ActionListener() {
+                public void actionPerformed(ActionEvent e) {
+                    insertEmoji(emoji);
+                    popup.setVisible(false);
+                }
+            });
+            grid.add(item);
+        }
+        popup.add(grid);
+        return popup;
+    }
+
+    private void insertEmoji(String emoji) {
+        if(msgWindow == null || emoji == null) return;
+        msgWindow.requestFocusInWindow();
+        msgWindow.replaceSelection(emoji);
+        updateSendButtonState();
     }
 
     public static void main(String args[]) {
@@ -1139,14 +1201,14 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             if(conversationTitleLabel != null) conversationTitleLabel.setText("选择会话");
             if(conversationSubtitleLabel != null) conversationSubtitleLabel.setText("从左侧选择好友、群聊或广播");
             if(conversationAvatar != null) conversationAvatar.setAvatar("?", false);
-            if(buttonFile != null) buttonFile.setEnabled(false);
+            if(buttonFile != null) buttonFile.setEnabled(true);
         } else if(isBroadcastConversation(selected)) {
             selectedChatTarget = null;
             selectedGroupName = null;
             if(conversationTitleLabel != null) conversationTitleLabel.setText(BROADCAST_CHAT);
             if(conversationSubtitleLabel != null) conversationSubtitleLabel.setText("消息将广播给所有在线用户");
             if(conversationAvatar != null) conversationAvatar.setAvatar(BROADCAST_CHAT, false);
-            if(buttonFile != null) buttonFile.setEnabled(false);
+            if(buttonFile != null) buttonFile.setEnabled(true);
         } else if(isGroupConversation(selected)) {
             selectedChatTarget = null;
             selectedGroupName = groupNameFromLabel(selected);
@@ -1159,7 +1221,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                         + onlineCount + " 人在线 · 只发送给群成员");
             }
             if(conversationAvatar != null) conversationAvatar.setAvatar(selectedGroupName, false);
-            if(buttonFile != null) buttonFile.setEnabled(false);
+            if(buttonFile != null) buttonFile.setEnabled(true);
         } else {
             selectedChatTarget = selected;
             selectedGroupName = null;
@@ -1169,7 +1231,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                 conversationSubtitleLabel.setText(online ? "当前为私聊，只发送给 " + selected : "好友离线，暂不能发送消息");
             }
             if(conversationAvatar != null) conversationAvatar.setAvatar(selected, false);
-            if(buttonFile != null) buttonFile.setEnabled(online);
+            if(buttonFile != null) buttonFile.setEnabled(true);
         }
         updateAttachmentPreview();
         updateSendButtonState();
@@ -1873,9 +1935,30 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     }
 
     private void chooseAndSendFile() {
+        if(ck == null || !ck.isConnected()) {
+            addMsg("<font color=\"#ff0000\">请先连接服务器后再发送文件。</font>");
+            return;
+        }
+        String selected = onlineList == null ? null : onlineList.getSelectedValue();
+        if(selected == null) {
+            addMsg("<font color=\"#ff0000\">请先从左侧选择一个在线好友。</font>");
+            return;
+        }
+        if(isBroadcastConversation(selected)) {
+            addMsg("<font color=\"#ff0000\">广播暂不支持发送文件，请选择一个在线好友私聊。</font>");
+            return;
+        }
+        if(isGroupConversation(selected)) {
+            addMsg("<font color=\"#ff0000\">群聊暂不支持文件群发，请选择一个在线好友私聊。</font>");
+            return;
+        }
         String target = getSelectedPrivateTarget();
         if(target == null || target.length() == 0) {
-            addMsg("<font color=\"#ff0000\">请选择一个联系人后再发送文件，群聊暂不支持文件群发。</font>");
+            addMsg("<font color=\"#ff0000\">请选择一个在线好友后再发送文件。</font>");
+            return;
+        }
+        if(!visibleUsers.contains(target)) {
+            addMsg("<font color=\"#ff0000\">对方当前离线，暂不能发送文件。</font>");
             return;
         }
         JFileChooser chooser = new JFileChooser();
@@ -1898,7 +1981,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             return false;
         }
         if(file.length() > MAX_FILE_BYTES) {
-            addMsg("<font color=\"#ff0000\">File is larger than " + displayFileSize(MAX_FILE_BYTES) + " limit.</font>");
+            addMsg("<font color=\"#ff0000\">文件超过 " + displayFileSize(MAX_FILE_BYTES) + " 限制。</font>");
             return false;
         }
         return true;
@@ -2003,7 +2086,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             }
             byte[] data = Files.readAllBytes(file.toPath());
             if(data.length > MAX_FILE_BYTES) {
-                addMsg("<font color=\"#ff0000\">File is larger than " + displayFileSize(MAX_FILE_BYTES) + " limit.</font>");
+                addMsg("<font color=\"#ff0000\">文件超过 " + displayFileSize(MAX_FILE_BYTES) + " 限制。</font>");
                 return false;
             }
             String encoded = Base64.getEncoder().encodeToString(data);
@@ -2179,6 +2262,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         if(e.getSource()==buttonRefresh) refreshUsers();
         if(e.getSource()==buttonAddFriend) addSelectedFriend();
         if(e.getSource()==buttonCreateGroup) showCreateGroupDialog();
+        if(e.getSource()==buttonEmoji) showEmojiPicker();
         if(e.getSource()==buttonFile) chooseAndSendFile();
         if(e.getSource()==buttonProfile) showProfileDialog();
         if(e.getSource()==buttonMoments) showMomentsDialog();
