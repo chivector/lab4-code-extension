@@ -75,7 +75,9 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private static final Font UI_FONT_SMALL = new Font("Microsoft YaHei UI", Font.PLAIN, 12);
     private static final Font TITLE_FONT = new Font("Microsoft YaHei UI", Font.BOLD, 17);
     private static final Font PAGE_TITLE_FONT = new Font("Microsoft YaHei UI", Font.BOLD, 22);
-    private static final Font EMOJI_FONT = new Font("Segoe UI Emoji", Font.PLAIN, 18);
+    private static final Font CHAT_TEXT_FONT = new Font("Dialog", Font.PLAIN, 15);
+    private static final Font CHAT_TEXT_SMALL_FONT = new Font("Dialog", Font.PLAIN, 12);
+    private static final Font EMOJI_FONT = new Font("Dialog", Font.PLAIN, 26);
     private static final String[] QUICK_EMOJIS = {
             "\uD83D\uDE00", "\uD83D\uDE04", "\uD83D\uDE02", "\uD83D\uDE05",
             "\uD83D\uDE0A", "\uD83D\uDE0D", "\uD83D\uDE18", "\uD83D\uDE0E",
@@ -515,16 +517,16 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         buttonSend = createButton("发送", true);
         buttonSend.setPreferredSize(new Dimension(76, 36));
         buttonSend.setToolTipText("发送消息 Enter");
-        buttonEmoji = createButton("\u263A", false);
-        buttonEmoji.setFont(new Font("Dialog", Font.PLAIN, 17));
+        buttonEmoji = createButton("\uD83D\uDE0A", false);
+        buttonEmoji.setFont(new Font("Dialog", Font.PLAIN, 22));
         buttonEmoji.setToolTipText("插入表情");
         buttonEmoji.setBorder(pad(4, 0, 4, 0));
-        buttonEmoji.setPreferredSize(new Dimension(38, 32));
+        buttonEmoji.setPreferredSize(new Dimension(42, 34));
         buttonFile = createButton("+", false);
         buttonFile.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 18));
         buttonFile.setToolTipText("选择本地文件");
         buttonFile.setBorder(pad(4, 0, 4, 0));
-        buttonFile.setPreferredSize(new Dimension(38, 32));
+        buttonFile.setPreferredSize(new Dimension(42, 34));
         buttonSend.addActionListener(this);
         buttonEmoji.addActionListener(this);
         buttonFile.addActionListener(this);
@@ -687,7 +689,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     }
 
     private void styleTextArea(JTextArea area) {
-        area.setFont(UI_FONT);
+        area.setFont(CHAT_TEXT_FONT);
         area.setForeground(TEXT);
         area.setBackground(Color.WHITE);
         area.setCaretColor(PRIMARY_DARK);
@@ -730,7 +732,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         popup.setBorder(new CompoundBorder(
                 new RoundedBorder(BORDER, RADIUS_MD),
                 pad(SPACE_SM, SPACE_SM, SPACE_SM, SPACE_SM)));
-        JPanel grid = new JPanel(new GridLayout(0, 8, SPACE_XS, SPACE_XS));
+        JPanel grid = new JPanel(new GridLayout(0, 6, SPACE_SM, SPACE_SM));
         grid.setBackground(Color.WHITE);
         for(int i=0;i<QUICK_EMOJIS.length;i++) {
             final String emoji = QUICK_EMOJIS[i];
@@ -739,7 +741,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             item.setFocusPainted(false);
             item.setContentAreaFilled(false);
             item.setBorder(new RoundedBorder(BORDER_LIGHT, RADIUS_SM));
-            item.setPreferredSize(new Dimension(34, 34));
+            item.setPreferredSize(new Dimension(48, 44));
             item.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             item.addActionListener(new ActionListener() {
                 public void actionPerformed(ActionEvent e) {
@@ -3343,7 +3345,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             row.setAlignmentX(Component.LEFT_ALIGNMENT);
             row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 34));
             JLabel label = new JLabel(message.time + "  " + message.body);
-            label.setFont(UI_FONT_SMALL);
+            label.setFont(CHAT_TEXT_SMALL_FONT);
             label.setForeground(MUTED);
             label.setOpaque(false);
             BubblePanel pill = new BubblePanel(new Color(235, 240, 247), BORDER_LIGHT, RADIUS_XL);
@@ -3388,7 +3390,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             block.setLayout(new BoxLayout(block, BoxLayout.Y_AXIS));
 
             JLabel name = new JLabel((outgoing ? "我 / " : "") + message.sender + "  " + message.time);
-            name.setFont(UI_FONT_SMALL);
+            name.setFont(CHAT_TEXT_SMALL_FONT);
             name.setForeground(MUTED);
             name.setAlignmentX(outgoing ? Component.RIGHT_ALIGNMENT : Component.LEFT_ALIGNMENT);
 
@@ -3398,7 +3400,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
             JLabel text = new JLabel("<html><div style=\"width:" + messageWidth(message.body)
                     + "px;\">" + htmlText(message.body) + "</div></html>");
-            text.setFont(UI_FONT);
+            text.setFont(CHAT_TEXT_FONT);
             text.setForeground(TEXT);
 
             JPanel bubble = new BubblePanel(outgoing ? OUTGOING_BUBBLE : INCOMING_BUBBLE,
