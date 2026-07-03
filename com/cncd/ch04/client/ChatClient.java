@@ -848,7 +848,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
         return new LoginPreference(
                 props.getProperty("host", ChatClient.serverText),
-                props.getProperty("port", "4567"),
+                props.getProperty("port", ChatClient.portText),
                 props.getProperty("username", ""));
     }
 
@@ -857,7 +857,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             Files.createDirectories(clientDataRoot());
             Properties props = new Properties();
             props.setProperty("host", login.host == null ? ChatClient.serverText : login.host);
-            props.setProperty("port", login.port == null ? "4567" : login.port);
+            props.setProperty("port", login.port == null ? ChatClient.portText : login.port);
             props.setProperty("username", login.username == null ? "" : login.username);
             try(OutputStream out = Files.newOutputStream(loginPreferenceFile())) {
                 props.store(out, "Chat login preference without password");
@@ -1158,20 +1158,26 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private void connect() {
         try {
             if(ck!=null) ck.dropMe();
-            ck = new ClientKernel(txtHost.getText(), Integer.parseInt(txtPort.getText()));
+            String host = txtHost.getText().trim();
+            int port = Integer.parseInt(txtPort.getText().trim());
+            setConnectionStatus("正在连接 " + host + ":" + port + " ...", WARNING);
+            ck = new ClientKernel(host, port);
             if(ck.isConnected()) {
                 ck.addClient(this);
                 ck.setNick(txtNick.getText());
                 initLogFile(txtNick.getText());
-                setConnectionStatus("已连接 " + txtHost.getText() + ":" + txtPort.getText()
+                setConnectionStatus("已连接 " + host + ":" + port
                         + "，本地端口 " + ck.getLocalPort(), SUCCESS);
                 setTitle(appName + " - " + txtNick.getText());
                 addMsg("<font color=\"#008000\">connected! Local Port:" + ck.getLocalPort() + "</font>");
                 refreshUsers();
                 uploadOwnMomentsToServer();
             } else {
-                setConnectionStatus("连接失败，请检查服务端和端口", DANGER);
-                addMsg("<font color=\"#ff0000\">连接失败，请确认服务端已启动、IP 和端口正确。</font>");
+                String detail = ck.getLastErrorMessage();
+                setConnectionStatus("连接失败，请检查服务端、防火墙和端口", DANGER);
+                addMsg("<font color=\"#ff0000\">连接失败："
+                        + escapeHtml(detail.length() == 0 ? "请确认服务端已启动、IP 和端口正确。" : detail)
+                        + "</font>");
             }
         } catch(Exception e) {
             setConnectionStatus("连接错误：" + e.getMessage(), DANGER);
@@ -2778,7 +2784,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             loginPasswordField = new PromptPasswordField(18, "请输入密码");
             registerPasswordField = new PromptPasswordField(18, "至少 4 位密码");
             hostField = createTextField(host == null || host.length() == 0 ? ChatClient.serverText : host, 16);
-            portField = createTextField(port == null || port.length() == 0 ? "4567" : port, 6);
+            portField = createTextField(port == null || port.length() == 0 ? ChatClient.portText : port, 6);
             styleTextField(loginUserField);
             styleTextField(registerUserField);
             styleTextField(loginPasswordField);

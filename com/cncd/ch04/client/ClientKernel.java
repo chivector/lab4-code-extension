@@ -9,12 +9,15 @@ public class ClientKernel {
     public static final char EXIT = 0xFE;
     public static final char NICK = 0xFD;
     public static final char COMMAND = 0xFD;
+    private static final int CONNECT_TIMEOUT_MS = 3000;
+    private static final int CONNECT_RETRIES = 2;
     
     private String serverAd;
     private int port;
     private Socket sock;
     private boolean isConnected = false;
     private boolean dropMe = false;
+    private IOException lastError;
     private LinkedList clients;
     private LinkedList pendingMessages;
     public String nick;
@@ -35,12 +38,24 @@ public class ClientKernel {
         }
     }
     public void connect() {
-        try {
-            sock = new Socket(serverAd, port);
-            isConnected = true;
-        } catch(IOException ioe ) {
-            ioe.printStackTrace();
+        for(int attempt=1; attempt<=CONNECT_RETRIES; attempt++) {
+            Socket candidate = new Socket();
+            try {
+                candidate.setKeepAlive(true);
+                candidate.setTcpNoDelay(true);
+                candidate.connect(new InetSocketAddress(serverAd, port), CONNECT_TIMEOUT_MS);
+                sock = candidate;
+                isConnected = true;
+                lastError = null;
+                return;
+            } catch(IOException ioe ) {
+                lastError = ioe;
+                closeQuietly(candidate);
+                if(attempt < CONNECT_RETRIES) pause(300);
+            }
         }
+        isConnected = false;
+        if(lastError != null) System.out.println("Connect failed: " + lastError.getMessage());
     }
     public int getPort() {
         return port;
@@ -51,17 +66,24 @@ public class ClientKernel {
         return true;
     }
     public int getLocalPort() {
-        return sock.getLocalPort();
+        return sock == null ? -1 : sock.getLocalPort();
     }
     public void dropMe() {
-        System.out.println("Drop ME!!!");
-        cms.drop();
-        cml.drop();
         dropMe = true;
-        while(cml.hasStoped() && cms.hasStoped()) pause(5);
+        isConnected = false;
+        if(cms != null) cms.drop();
+        if(cml != null) cml.drop();
+        closeQuietly(sock);
+        long start = System.currentTimeMillis();
+        while(System.currentTimeMillis() - start < 1000) {
+            boolean senderStopped = cms == null || cms.hasStoped();
+            boolean listenerStopped = cml == null || cml.hasStoped();
+            if(senderStopped && listenerStopped) break;
+            pause(10);
+        }
     }
     public void sendMessage(String str) {
-        if(!dropMe && str != null && str.length() > 0) {
+        if(!dropMe && isConnected() && cms != null && str != null && str.length() > 0) {
             if(str.charAt(0) == '/')
                 cms.addMessage("" + ClientKernel.COMMAND + str.substring(1) );
             else cms.addMessage(str);
@@ -109,7 +131,18 @@ public class ClientKernel {
         });
     }
     public boolean isConnected() {
-        return isConnected;
+        return isConnected && sock != null && sock.isConnected() && !sock.isClosed();
+    }
+    public String getLastErrorMessage() {
+        return lastError == null ? "" : lastError.getMessage();
+    }
+    void markDisconnected() {
+        isConnected = false;
+    }
+    private void closeQuietly(Socket socket) {
+        try {
+            if(socket != null) socket.close();
+        } catch(IOException ioe) {}
     }
     public static void main(String args[]) {
         new ClientKernel("localhost", 1984);
@@ -130,6 +163,10 @@ class ClientMsgSender extends Thread {
     public synchronized void addMessage(String msg) {
         msgList.addLast(msg);
     }
+    private synchronized String nextMessage() {
+        if(msgList.size() == 0) return null;
+        return (String)msgList.removeFirst();
+    }
     public void drop() {
         running = false;
     }
@@ -140,8 +177,8 @@ class ClientMsgSender extends Thread {
         try {
             DataOutputStream dataOut = new DataOutputStream(s.getOutputStream());
             while(running) {
-                while(msgList.size()>0) {
-                    String msg = ((String)(msgList.removeFirst()));
+                String msg;
+                while((msg = nextMessage()) != null) {
                     if(msg.length() > 0 && msg.charAt(0) == ClientKernel.COMMAND) {
                         dataOut.write(ClientKernel.COMMAND);
                         dataOut.write(msg.substring(1).getBytes(StandardCharsets.UTF_8));
@@ -156,8 +193,9 @@ class ClientMsgSender extends Thread {
             dataOut.write(ClientKernel.EXIT);
             dataOut.close();
         } catch(Exception ioe) {
-            ioe.printStackTrace();
+            if(running) ioe.printStackTrace();
         } finally {
+            ck.markDisconnected();
             hasStoped = true;
         }
     }
@@ -194,8 +232,9 @@ class ClientMsgListener extends Thread{
                 dataIn.close();
                 buffIn.close();
         } catch(IOException ioe) {
-            ioe.printStackTrace();
+            if(running) ioe.printStackTrace();
         } finally {
+            ck.markDisconnected();
             hasStoped = true;
         }
     }

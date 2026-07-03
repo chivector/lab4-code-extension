@@ -15,6 +15,7 @@ public class ConnectedClient {
     private ServerMsgSender msgSend;
     private ServerMsgListener msgList;
     private Socket sock;
+    private boolean dropped = false;
     public boolean printMsg = false;
     private String lastBroadcast = "";
     private long lastBroadcastAt = 0;
@@ -25,6 +26,10 @@ public class ConnectedClient {
         ipNumber = sock.getInetAddress().getHostAddress();
         portNumber = sock.getPort();
         this.sock = sock;
+        try {
+            this.sock.setKeepAlive(true);
+            this.sock.setTcpNoDelay(true);
+        } catch(SocketException se) {}
         msgSend = new ServerMsgSender(this.sock, this);
         msgList = new ServerMsgListener(this.sock, this);
         nick = "" + portNumber;
@@ -44,9 +49,14 @@ public class ConnectedClient {
     public void broadcastMessage(String str) {
         if(!isSpam(str)) ck.broadcast(str);
     }
-    public void dropClient() {
-        msgList.closeConnection();
-        msgSend.closeConnection();
+    public synchronized void dropClient() {
+        if(dropped) return;
+        dropped = true;
+        if(msgList != null) msgList.closeConnection();
+        if(msgSend != null) msgSend.closeConnection();
+        try {
+            if(sock != null) sock.close();
+        } catch(IOException ioe) {}
         ck.remove(this);
     }
     public void runCommand(String str) {
@@ -100,14 +110,18 @@ class ServerMsgSender extends Thread {
         if(cc.printMsg) System.out.println("MsgSender.addMessage: " +str);
         msgList.addLast(str);
     }
+    private synchronized String nextMessage() {
+        if(msgList.size() == 0) return null;
+        return (String)msgList.removeFirst();
+    }
     private void collectInfo() {
     }
     public void run() {
         try {
             DataOutputStream dataOut = new DataOutputStream(sock.getOutputStream());
             while(running) {
-                while(msgList.size()>0) {
-                    String toSend = (String)(msgList.removeFirst());
+                String toSend;
+                while((toSend = nextMessage()) != null) {
                     dataOut.write(toSend.getBytes(StandardCharsets.UTF_8));
                     dataOut.write(MainServer.MSGENDCHAR);
                     dataOut.flush();
@@ -118,8 +132,7 @@ class ServerMsgSender extends Thread {
             }
         } catch(Exception e) {
             String msg = e.getMessage();
-            if(msg.startsWith(MainServer.DISCONNECTED) ||
-                msg.startsWith(MainServer.DISCONNECTED_CLIENT)) {
+            if(isNormalDisconnect(e)) {
                 System.out.println("MsgSender.run Client disconnected nick: " + cc.nick);
                 cc.dropClient();
             } else {
@@ -129,8 +142,20 @@ class ServerMsgSender extends Thread {
             }
         }
     }
+    private boolean isNormalDisconnect(Exception e) {
+        String msg = e.getMessage();
+        return e instanceof SocketException
+                || e instanceof EOFException
+                || (msg != null && (msg.startsWith(MainServer.DISCONNECTED)
+                || msg.startsWith(MainServer.DISCONNECTED_CLIENT)
+                || msg.indexOf("closed") >= 0
+                || msg.indexOf("中止") >= 0));
+    }
     public void closeConnection() {
         running = false;
+        try {
+            if(sock != null) sock.close();
+        } catch(IOException ioe) {}
     }
 }
 class ServerMsgListener extends Thread {
@@ -186,10 +211,11 @@ class ServerMsgListener extends Thread {
                 }
             }
         } catch(SocketException se) {
-            if(se.getMessage().startsWith("Connection reset"))
+            if(se.getMessage() == null || se.getMessage().startsWith("Connection reset")
+                    || se.getMessage().startsWith("Socket closed"))
                 cc.dropClient();
         } catch(Exception e) {
-            e.printStackTrace();
+            if(!(e instanceof EOFException)) e.printStackTrace();
             cc.dropClient();
         }
     }

@@ -9,34 +9,36 @@ public class ConnectionKeeper {
         this.cp = parser;
         clientList = new LinkedList();
     }
-    public void add(Socket s) {
+    public synchronized void add(Socket s) {
         MainServer.connects++;
         ConnectedClient cc = new ConnectedClient(s, this);
         clientList.addLast(cc);
         broadcast("Server: " + cc.getNick() + " joined.");
         broadcastUserList();
     }
-    public void remove(ConnectedClient cc) {
+    public synchronized void remove(ConnectedClient cc) {
+        if(cc == null || !clientList.contains(cc)) return;
         String nick = cc.getNick();
         clientList.remove(cc);
         cc = null;
         broadcast("Server: " + nick + " left.");
         broadcastUserList();
     }
-    public LinkedList users() {
-        return clientList;
+    public synchronized LinkedList users() {
+        return new LinkedList(clientList);
     }
     public void runCommand(ConnectedClient cc, String str) {
         cp.runCommand(cc, str);
     }
     public void sendTo(ConnectedClient sender, String user, String msg) {
         boolean found = false;
-        for(int i =0;i<clientList.size();i++) {
-            ConnectedClient receiver = (ConnectedClient)(clientList.get(i));
+        Object[] snapshot = snapshotClients();
+        for(int i =0;i<snapshot.length;i++) {
+            ConnectedClient receiver = (ConnectedClient)(snapshot[i]);
             if(user.equalsIgnoreCase(receiver.nick)) {
                 receiver.sendMessage(msg);
                 found = true;
-                i = clientList.size()+5; // Stop the loop.
+                break;
             }
         }
         if(!found) {
@@ -68,9 +70,14 @@ public class ConnectionKeeper {
         return msg;
     }
     public void broadcast(String msg) {
-        for(int i =0;i<clientList.size();i++) {
-            ConnectedClient cc = (ConnectedClient)(clientList.get(i));
+        Object[] snapshot = snapshotClients();
+        for(int i =0;i<snapshot.length;i++) {
+            ConnectedClient cc = (ConnectedClient)(snapshot[i]);
             cc.sendMessage(msg);
         }
+    }
+
+    private synchronized Object[] snapshotClients() {
+        return clientList.toArray();
     }
 }

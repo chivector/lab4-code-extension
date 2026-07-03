@@ -16,6 +16,7 @@ public class MainServer extends Thread {
     public ConnectionKeeper ck;
     public static DataSource ds;
     public static CommandParser cp;
+    private static final int SERVER_BACKLOG = 50;
     public MainServer(int port) {
         this.port = port;
         ck = new ConnectionKeeper(MainServer.cp);
@@ -25,25 +26,38 @@ public class MainServer extends Thread {
     public void run() {
         while(true) {
             try {
-                sSock = new ServerSocket(port);
+                sSock = new ServerSocket();
+                sSock.setReuseAddress(true);
+                sSock.bind(new InetSocketAddress(port), SERVER_BACKLOG);
                 if(newPort) {
                     System.out.println("Server Listening at port: " + sSock.getLocalPort());
                     newPort = false;
                 }
-                sock = sSock.accept();
-                ck.add(sock);
-                sSock.close();
-            } catch(Exception e) {
-                String message = e.getMessage();
-                if(message.startsWith(MainServer.PORT_USED_ERROR)) {
-                    System.out.println("Port " + port + " is already used, Attempting to use " + (port+=1));
-                    newPort = true;
-                } else {
-                    e.printStackTrace();
-                    System.exit(1);
+
+                while(true) {
+                    sock = sSock.accept();
+                    sock.setKeepAlive(true);
+                    sock.setTcpNoDelay(true);
+                    ck.add(sock);
                 }
+            } catch(BindException be) {
+                System.out.println("Port " + port + " is already used, attempting to use " + (port + 1));
+                port += 1;
+                newPort = true;
+                closeServerSocket();
+            } catch(Exception e) {
+                System.out.println("Server accept loop recovered from: " + e.getMessage());
+                e.printStackTrace();
+                closeServerSocket();
+                MainServer.sleep(500);
             }
         }
+    }
+
+    private void closeServerSocket() {
+        try {
+            if(sSock != null) sSock.close();
+        } catch(Exception e) {}
     }
     public static void sleep(int time) {
         try {
