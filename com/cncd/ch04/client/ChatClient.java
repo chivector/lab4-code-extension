@@ -38,27 +38,47 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private static final int MOMENT_TEXT_LIMIT = 300;
     private static final String BROADCAST_CHAT = "广播";
     private static final String GROUP_LABEL_PREFIX = "群聊 · ";
-    private static final Color APP_BACKGROUND = new Color(245, 247, 250);
-    private static final Color SIDEBAR_BACKGROUND = new Color(236, 240, 246);
+    private static final Color APP_BACKGROUND = new Color(242, 245, 249);
+    private static final Color SIDEBAR_BACKGROUND = new Color(235, 240, 247);
     private static final Color PANEL_BACKGROUND = Color.WHITE;
-    private static final Color CHAT_BACKGROUND = new Color(248, 250, 252);
+    private static final Color SURFACE = Color.WHITE;
+    private static final Color SURFACE_SOFT = new Color(248, 250, 252);
+    private static final Color CHAT_BACKGROUND = new Color(246, 248, 251);
     private static final Color PRIMARY = new Color(37, 99, 235);
     private static final Color PRIMARY_DARK = new Color(29, 78, 216);
     private static final Color PRIMARY_LIGHT = new Color(219, 234, 254);
-    private static final Color BORDER = new Color(209, 217, 230);
+    private static final Color PRIMARY_SOFT = new Color(239, 246, 255);
+    private static final Color BORDER = new Color(215, 224, 236);
+    private static final Color BORDER_LIGHT = new Color(229, 235, 245);
     private static final Color TEXT = new Color(30, 41, 59);
     private static final Color MUTED = new Color(100, 116, 139);
     private static final Color SOFT_MUTED = new Color(148, 163, 184);
     private static final Color SUCCESS = new Color(22, 163, 74);
+    private static final Color WARNING = new Color(217, 119, 6);
     private static final Color DANGER = new Color(220, 38, 38);
     private static final Color INCOMING_BUBBLE = Color.WHITE;
-    private static final Color OUTGOING_BUBBLE = new Color(220, 238, 255);
+    private static final Color OUTGOING_BUBBLE = new Color(218, 235, 255);
+    private static final int RADIUS_SM = 10;
+    private static final int RADIUS_MD = 14;
+    private static final int RADIUS_LG = 18;
+    private static final int RADIUS_XL = 24;
+    private static final int SPACE_XS = 4;
+    private static final int SPACE_SM = 8;
+    private static final int SPACE_MD = 12;
+    private static final int SPACE_LG = 16;
+    private static final int SPACE_XL = 20;
+    private static final int SIDEBAR_WIDTH = 304;
+    private static final int BUTTON_HEIGHT = 36;
+    private static final int INPUT_HEIGHT = 38;
     private static final Font UI_FONT = new Font("Microsoft YaHei UI", Font.PLAIN, 13);
     private static final Font UI_FONT_BOLD = new Font("Microsoft YaHei UI", Font.BOLD, 13);
+    private static final Font UI_FONT_SMALL = new Font("Microsoft YaHei UI", Font.PLAIN, 12);
     private static final Font TITLE_FONT = new Font("Microsoft YaHei UI", Font.BOLD, 17);
+    private static final Font PAGE_TITLE_FONT = new Font("Microsoft YaHei UI", Font.BOLD, 22);
 
     JPanel northPanel, southPanel, eastPanel;
-    JTextField txtHost, txtPort, msgWindow, txtNick;
+    JTextField txtHost, txtPort, txtNick;
+    JTextArea msgWindow;
     JButton buttonConnect, buttonSend, buttonRefresh, buttonAddFriend, buttonFile, buttonLog;
     JButton buttonCreateGroup;
     JButton buttonProfile, buttonMoments;
@@ -68,6 +88,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     JLabel attachmentNameLabel, attachmentMetaLabel;
     JButton buttonRemoveAttachment;
     AvatarView conversationAvatar, sidebarAvatar;
+    JTextField conversationSearchField;
+    JPanel conversationListPanel;
     JList<String> onlineList;
     DefaultListModel<String> userModel;
     JScrollPane sc;
@@ -202,30 +224,37 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
     private JPanel createConnectionPanel() {
         northPanel = new JPanel(new BorderLayout());
-        northPanel.setBackground(new Color(250, 252, 255));
+        northPanel.setBackground(SURFACE);
         northPanel.setBorder(new CompoundBorder(
-                new MatteBorder(0, 0, 1, 0, new Color(226, 232, 240)),
-                new EmptyBorder(10, 18, 10, 18)));
+                new MatteBorder(0, 0, 1, 0, BORDER_LIGHT),
+                pad(12, 18, 12, 18)));
 
         JLabel appTitle = new JLabel("CNCD Chat");
-        appTitle.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 18));
+        appTitle.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 19));
         appTitle.setForeground(TEXT);
         JLabel appSubTitle = new JLabel("现代桌面聊天实验");
-        appSubTitle.setFont(new Font("Microsoft YaHei UI", Font.PLAIN, 12));
+        appSubTitle.setFont(UI_FONT_SMALL);
         appSubTitle.setForeground(MUTED);
         JPanel titleBlock = new JPanel();
         titleBlock.setOpaque(false);
         titleBlock.setLayout(new BoxLayout(titleBlock, BoxLayout.Y_AXIS));
         titleBlock.add(appTitle);
+        titleBlock.add(Box.createVerticalStrut(2));
         titleBlock.add(appSubTitle);
+        JPanel brand = new JPanel();
+        brand.setOpaque(false);
+        brand.setLayout(new BoxLayout(brand, BoxLayout.X_AXIS));
+        brand.add(new AvatarView("C", false));
+        brand.add(Box.createHorizontalStrut(SPACE_MD));
+        brand.add(titleBlock);
 
         txtHost = createTextField(ChatClient.serverText, 10);
         txtPort = createTextField(ChatClient.portText, 5);
         txtNick = createTextField(ChatClient.nickText, 10);
         buttonConnect = createButton("重连", false);
-        buttonConnect.setPreferredSize(new Dimension(68, 34));
+        buttonConnect.setPreferredSize(new Dimension(68, BUTTON_HEIGHT));
         statusLabel = new JLabel("未连接");
-        statusLabel.setFont(UI_FONT);
+        statusLabel.setFont(UI_FONT_SMALL);
         statusLabel.setForeground(MUTED);
 
         buttonConnect.addActionListener(this);
@@ -234,11 +263,14 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         JPanel statusBlock = new JPanel();
         statusBlock.setOpaque(false);
         statusBlock.setLayout(new BoxLayout(statusBlock, BoxLayout.X_AXIS));
-        statusBlock.add(statusLabel);
-        statusBlock.add(Box.createHorizontalStrut(10));
+        BubblePanel statusPill = createPillPanel(SURFACE_SOFT, BORDER_LIGHT);
+        statusPill.setLayout(new BorderLayout());
+        statusPill.add(statusLabel, BorderLayout.CENTER);
+        statusBlock.add(statusPill);
+        statusBlock.add(Box.createHorizontalStrut(SPACE_SM));
         statusBlock.add(buttonConnect);
 
-        northPanel.add(titleBlock, BorderLayout.WEST);
+        northPanel.add(brand, BorderLayout.WEST);
         northPanel.add(statusBlock, BorderLayout.EAST);
         return northPanel;
     }
@@ -252,32 +284,29 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     }
 
     private JPanel createConversationPanel() {
-        eastPanel = new JPanel(new BorderLayout(0, 10));
-        eastPanel.setBackground(new Color(241, 245, 249));
+        eastPanel = new JPanel(new BorderLayout(0, SPACE_MD));
+        eastPanel.setBackground(SIDEBAR_BACKGROUND);
         eastPanel.setBorder(new CompoundBorder(
-                new MatteBorder(0, 0, 0, 1, new Color(226, 232, 240)),
-                new EmptyBorder(14, 12, 12, 12)));
-        eastPanel.setPreferredSize(new Dimension(268, 0));
+                new MatteBorder(0, 0, 0, 1, BORDER_LIGHT),
+                pad(SPACE_LG, SPACE_MD, SPACE_MD, SPACE_MD)));
+        eastPanel.setPreferredSize(new Dimension(SIDEBAR_WIDTH, 0));
 
         JPanel topPanel = new JPanel(new BorderLayout(0, 12));
         topPanel.setOpaque(false);
         topPanel.add(createSidebarAccountPanel(), BorderLayout.NORTH);
-        JLabel title = new JLabel("会话");
-        title.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 15));
-        title.setForeground(MUTED);
-        topPanel.add(title, BorderLayout.SOUTH);
+        topPanel.add(createConversationSearchPanel(), BorderLayout.SOUTH);
         eastPanel.add(topPanel, BorderLayout.NORTH);
 
         userModel = new DefaultListModel<String>();
         userModel.addElement(BROADCAST_CHAT);
         onlineList = new JList<String>(userModel);
         onlineList.setFont(UI_FONT_BOLD);
-        onlineList.setFixedCellHeight(58);
+        onlineList.setFixedCellHeight(64);
         onlineList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         onlineList.setSelectionBackground(PRIMARY_LIGHT);
         onlineList.setSelectionForeground(TEXT);
         onlineList.setBackground(SIDEBAR_BACKGROUND);
-        onlineList.setBorder(new EmptyBorder(4, 0, 4, 0));
+        onlineList.setBorder(pad(SPACE_XS, 0, SPACE_XS, 0));
         onlineList.setCellRenderer(new ConversationRenderer());
         onlineList.addListSelectionListener(new javax.swing.event.ListSelectionListener() {
             public void valueChanged(javax.swing.event.ListSelectionEvent e) {
@@ -304,16 +333,20 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         JScrollPane userScroll = new JScrollPane(onlineList);
         userScroll.setBorder(null);
         userScroll.getViewport().setBackground(SIDEBAR_BACKGROUND);
-        eastPanel.add(userScroll, BorderLayout.CENTER);
+        conversationListPanel = new JPanel(new CardLayout());
+        conversationListPanel.setOpaque(false);
+        conversationListPanel.add(userScroll, "list");
+        conversationListPanel.add(createEmptyConversationPanel(), "empty");
+        eastPanel.add(conversationListPanel, BorderLayout.CENTER);
 
-        JPanel tools = new JPanel(new GridLayout(0, 2, 7, 7));
+        JPanel tools = new JPanel(new GridLayout(0, 2, SPACE_SM, SPACE_SM));
         tools.setOpaque(false);
-        buttonRefresh = createButton("刷新", false);
-        buttonAddFriend = createButton("好友", false);
-        buttonCreateGroup = createButton("建群", false);
-        buttonProfile = createButton("个人信息", false);
-        buttonMoments = createButton("朋友圈", false);
-        buttonLog = createButton("日志", false);
+        buttonRefresh = createToolButton("刷新");
+        buttonAddFriend = createToolButton("好友");
+        buttonCreateGroup = createToolButton("建群");
+        buttonProfile = createToolButton("资料");
+        buttonMoments = createToolButton("朋友圈");
+        buttonLog = createToolButton("记录");
         buttonRefresh.addActionListener(this);
         buttonAddFriend.addActionListener(this);
         buttonCreateGroup.addActionListener(this);
@@ -330,25 +363,56 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         return eastPanel;
     }
 
+    private JPanel createConversationSearchPanel() {
+        JPanel panel = new JPanel();
+        panel.setOpaque(false);
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+
+        JLabel title = createSectionTitle("会话");
+        title.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        conversationSearchField = new PromptTextField("", 14, "搜索好友、群聊、广播");
+        styleTextField(conversationSearchField);
+        conversationSearchField.setMaximumSize(new Dimension(Integer.MAX_VALUE, INPUT_HEIGHT));
+        conversationSearchField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            public void insertUpdate(javax.swing.event.DocumentEvent e) { filterConversations(); }
+            public void removeUpdate(javax.swing.event.DocumentEvent e) { filterConversations(); }
+            public void changedUpdate(javax.swing.event.DocumentEvent e) { filterConversations(); }
+        });
+
+        panel.add(title);
+        panel.add(Box.createVerticalStrut(SPACE_SM));
+        panel.add(conversationSearchField);
+        return panel;
+    }
+
+    private JPanel createEmptyConversationPanel() {
+        return createEmptyState("没有匹配的会话", "换个关键词试试");
+    }
+
     private JPanel createSidebarAccountPanel() {
-        JPanel accountPanel = new BubblePanel(Color.WHITE, new Color(226, 232, 240), 18);
-        accountPanel.setLayout(new BorderLayout(10, 0));
-        accountPanel.setBorder(new EmptyBorder(12, 12, 12, 12));
+        JPanel accountPanel = createCardPanel(SPACE_MD);
+        accountPanel.setLayout(new BorderLayout(SPACE_MD, 0));
 
         sidebarAvatar = new AvatarView("?", false);
         sidebarNameLabel = new JLabel("未登录");
-        sidebarNameLabel.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 15));
+        sidebarNameLabel.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 16));
         sidebarNameLabel.setForeground(TEXT);
         sidebarSignatureLabel = new JLabel("请先登录账号");
-        sidebarSignatureLabel.setFont(new Font("Microsoft YaHei UI", Font.PLAIN, 12));
+        sidebarSignatureLabel.setFont(UI_FONT_SMALL);
         sidebarSignatureLabel.setForeground(MUTED);
+        JLabel onlineBadge = new JLabel("本地账号");
+        onlineBadge.setFont(new Font("Microsoft YaHei UI", Font.PLAIN, 11));
+        onlineBadge.setForeground(PRIMARY_DARK);
 
         JPanel textPanel = new JPanel();
         textPanel.setOpaque(false);
         textPanel.setLayout(new BoxLayout(textPanel, BoxLayout.Y_AXIS));
         textPanel.add(sidebarNameLabel);
-        textPanel.add(Box.createVerticalStrut(3));
+        textPanel.add(Box.createVerticalStrut(SPACE_XS));
         textPanel.add(sidebarSignatureLabel);
+        textPanel.add(Box.createVerticalStrut(SPACE_XS));
+        textPanel.add(onlineBadge);
 
         accountPanel.add(sidebarAvatar, BorderLayout.WEST);
         accountPanel.add(textPanel, BorderLayout.CENTER);
@@ -370,10 +434,10 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         chatPanel.setBackground(CHAT_BACKGROUND);
 
         JPanel header = new JPanel(new BorderLayout());
-        header.setBackground(new Color(250, 252, 255));
+        header.setBackground(SURFACE);
         header.setBorder(new CompoundBorder(
-                new MatteBorder(0, 0, 1, 0, new Color(226, 232, 240)),
-                new EmptyBorder(14, 20, 14, 20)));
+                new MatteBorder(0, 0, 1, 0, BORDER_LIGHT),
+                pad(SPACE_LG, SPACE_XL, SPACE_LG, SPACE_XL)));
         JPanel identity = new JPanel();
         identity.setOpaque(false);
         identity.setLayout(new BoxLayout(identity, BoxLayout.X_AXIS));
@@ -387,13 +451,20 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         conversationTitleLabel.setFont(TITLE_FONT);
         conversationTitleLabel.setForeground(TEXT);
         conversationSubtitleLabel = new JLabel("消息将发送给所有在线用户");
-        conversationSubtitleLabel.setFont(UI_FONT);
+        conversationSubtitleLabel.setFont(UI_FONT_SMALL);
         conversationSubtitleLabel.setForeground(MUTED);
         textBlock.add(conversationTitleLabel);
-        textBlock.add(Box.createVerticalStrut(2));
+        textBlock.add(Box.createVerticalStrut(SPACE_XS));
         textBlock.add(conversationSubtitleLabel);
         identity.add(textBlock);
         header.add(identity, BorderLayout.WEST);
+
+        BubblePanel statePill = createPillPanel(PRIMARY_SOFT, BORDER_LIGHT);
+        statePill.setLayout(new BorderLayout());
+        JLabel stateText = createHintLabel("消息同步中");
+        stateText.setForeground(PRIMARY_DARK);
+        statePill.add(stateText, BorderLayout.CENTER);
+        header.add(statePill, BorderLayout.EAST);
 
         chatPanel.add(header, BorderLayout.NORTH);
         chatPanel.add(createHistoryPanel(), BorderLayout.CENTER);
@@ -404,64 +475,74 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private JPanel createHistoryPanel() {
         JPanel panel = new JPanel(new BorderLayout());
         panel.setBackground(CHAT_BACKGROUND);
-        panel.setBorder(new EmptyBorder(16, 18, 16, 18));
+        panel.setBorder(pad(SPACE_LG, SPACE_XL, SPACE_LG, SPACE_XL));
         historyWindow = new ClientHistory();
-        sc = new JScrollPane(historyWindow);
+        sc = createModernScrollPane(historyWindow, CHAT_BACKGROUND);
         sc.setAutoscrolls(true);
-        sc.setBorder(null);
-        sc.getViewport().setBackground(CHAT_BACKGROUND);
-        sc.getVerticalScrollBar().setUnitIncrement(16);
         panel.add(sc, BorderLayout.CENTER);
         return panel;
     }
 
     private JPanel createInputPanel() {
-        southPanel = new JPanel(new BorderLayout(8, 8));
-        southPanel.setBackground(new Color(250, 252, 255));
+        southPanel = new JPanel(new BorderLayout(SPACE_SM, SPACE_SM));
+        southPanel.setBackground(SURFACE);
         southPanel.setBorder(new CompoundBorder(
-                new MatteBorder(1, 0, 0, 0, new Color(226, 232, 240)),
-                new EmptyBorder(12, 18, 14, 18)));
+                new MatteBorder(1, 0, 0, 0, BORDER_LIGHT),
+                pad(SPACE_MD, SPACE_XL, SPACE_MD, SPACE_XL)));
 
         attachmentPanel = createAttachmentPanel();
-        msgWindow = new PromptTextField("", 24, "输入消息，Enter 发送");
-        styleTextField(msgWindow);
-        msgWindow.setPreferredSize(new Dimension(0, 38));
-        msgWindow.setToolTipText("输入消息后按 Enter 发送");
+        msgWindow = new PromptTextArea("输入消息，Enter 发送，Shift+Enter 换行");
+        styleTextArea(msgWindow);
+        msgWindow.setRows(3);
+        msgWindow.setToolTipText("Enter 发送，Shift+Enter 换行，↑ 取回上一条消息");
         msgWindow.addKeyListener(this);
+        msgWindow.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            public void insertUpdate(javax.swing.event.DocumentEvent e) { updateSendButtonState(); }
+            public void removeUpdate(javax.swing.event.DocumentEvent e) { updateSendButtonState(); }
+            public void changedUpdate(javax.swing.event.DocumentEvent e) { updateSendButtonState(); }
+        });
+        installMessageShortcuts();
         buttonSend = createButton("发送", true);
-        buttonSend.setPreferredSize(new Dimension(72, 38));
-        buttonSend.setToolTipText("发送消息");
+        buttonSend.setPreferredSize(new Dimension(76, 42));
+        buttonSend.setToolTipText("发送消息 Enter");
         buttonFile = createButton("+", false);
         buttonFile.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 18));
         buttonFile.setToolTipText("选择本地文件");
-        buttonFile.setPreferredSize(new Dimension(42, 38));
+        buttonFile.setPreferredSize(new Dimension(42, 42));
         buttonSend.addActionListener(this);
         buttonFile.addActionListener(this);
         buttonFile.setEnabled(false);
+        buttonSend.setEnabled(false);
 
-        JPanel inputRow = new JPanel(new BorderLayout(8, 0));
+        JPanel inputRow = new JPanel(new BorderLayout(SPACE_SM, 0));
         inputRow.setOpaque(false);
         inputRow.add(buttonFile, BorderLayout.WEST);
-        inputRow.add(msgWindow, BorderLayout.CENTER);
+        JScrollPane messageScroll = new JScrollPane(msgWindow);
+        messageScroll.setBorder(new RoundedBorder(BORDER, RADIUS_LG));
+        messageScroll.getViewport().setBackground(Color.WHITE);
+        inputRow.add(messageScroll, BorderLayout.CENTER);
         inputRow.add(buttonSend, BorderLayout.EAST);
+
+        JLabel hint = createHintLabel("Enter 发送 · Shift+Enter 换行 · ↑ 取回上一条");
 
         southPanel.add(attachmentPanel, BorderLayout.NORTH);
         southPanel.add(inputRow, BorderLayout.CENTER);
+        southPanel.add(hint, BorderLayout.SOUTH);
         return southPanel;
     }
 
     private JPanel createAttachmentPanel() {
-        JPanel panel = new BubblePanel(new Color(239, 246, 255), new Color(147, 197, 253), 14);
-        panel.setLayout(new BorderLayout(10, 0));
-        panel.setBorder(new EmptyBorder(8, 10, 8, 10));
+        JPanel panel = new BubblePanel(PRIMARY_SOFT, new Color(147, 197, 253), RADIUS_MD);
+        panel.setLayout(new BorderLayout(SPACE_MD, 0));
+        panel.setBorder(pad(SPACE_SM, SPACE_MD, SPACE_SM, SPACE_MD));
         panel.setVisible(false);
 
         JLabel icon = new JLabel("文件");
         icon.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 12));
         icon.setForeground(PRIMARY_DARK);
         icon.setHorizontalAlignment(SwingConstants.CENTER);
-        icon.setPreferredSize(new Dimension(46, 28));
-        icon.setBorder(new RoundedBorder(new Color(147, 197, 253), 8));
+        icon.setPreferredSize(new Dimension(48, 30));
+        icon.setBorder(new RoundedBorder(new Color(147, 197, 253), RADIUS_SM));
 
         JPanel textPanel = new JPanel();
         textPanel.setOpaque(false);
@@ -470,14 +551,14 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         attachmentNameLabel.setFont(UI_FONT_BOLD);
         attachmentNameLabel.setForeground(TEXT);
         attachmentMetaLabel = new JLabel("");
-        attachmentMetaLabel.setFont(new Font("Microsoft YaHei UI", Font.PLAIN, 12));
+        attachmentMetaLabel.setFont(UI_FONT_SMALL);
         attachmentMetaLabel.setForeground(MUTED);
         textPanel.add(attachmentNameLabel);
-        textPanel.add(Box.createVerticalStrut(2));
+        textPanel.add(Box.createVerticalStrut(SPACE_XS));
         textPanel.add(attachmentMetaLabel);
 
         buttonRemoveAttachment = createButton("取消", false);
-        buttonRemoveAttachment.setPreferredSize(new Dimension(68, 30));
+        buttonRemoveAttachment.setPreferredSize(new Dimension(68, 32));
         buttonRemoveAttachment.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
                 clearAttachment();
@@ -497,6 +578,69 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         return label;
     }
 
+    private JLabel createSectionTitle(String text) {
+        JLabel label = new JLabel(text);
+        label.setFont(UI_FONT_BOLD);
+        label.setForeground(MUTED);
+        return label;
+    }
+
+    private JLabel createHintLabel(String text) {
+        JLabel label = new JLabel(text);
+        label.setFont(UI_FONT_SMALL);
+        label.setForeground(MUTED);
+        return label;
+    }
+
+    private BubblePanel createCardPanel(int padding) {
+        BubblePanel panel = new BubblePanel(SURFACE, BORDER_LIGHT, RADIUS_LG);
+        panel.setBorder(pad(padding));
+        return panel;
+    }
+
+    private BubblePanel createPillPanel(Color fill, Color stroke) {
+        BubblePanel panel = new BubblePanel(fill, stroke, RADIUS_XL);
+        panel.setBorder(new EmptyBorder(5, 10, 5, 10));
+        return panel;
+    }
+
+    private Border pad(int padding) {
+        return new EmptyBorder(padding, padding, padding, padding);
+    }
+
+    private Border pad(int top, int left, int bottom, int right) {
+        return new EmptyBorder(top, left, bottom, right);
+    }
+
+    private JScrollPane createModernScrollPane(Component component, Color background) {
+        JScrollPane scroll = new JScrollPane(component);
+        scroll.setBorder(null);
+        scroll.getViewport().setBackground(background);
+        scroll.getVerticalScrollBar().setUnitIncrement(18);
+        scroll.getHorizontalScrollBar().setUnitIncrement(18);
+        return scroll;
+    }
+
+    private JPanel createEmptyState(String title, String detail) {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setOpaque(false);
+        JPanel card = createCardPanel(SPACE_XL);
+        card.setLayout(new BoxLayout(card, BoxLayout.Y_AXIS));
+        JLabel titleLabel = new JLabel(title);
+        titleLabel.setFont(UI_FONT_BOLD);
+        titleLabel.setForeground(TEXT);
+        titleLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        JLabel detailLabel = new JLabel(detail);
+        detailLabel.setFont(UI_FONT_SMALL);
+        detailLabel.setForeground(MUTED);
+        detailLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        card.add(titleLabel);
+        card.add(Box.createVerticalStrut(SPACE_SM));
+        card.add(detailLabel);
+        panel.add(card);
+        return panel;
+    }
+
     private JTextField createTextField(String text, int columns) {
         JTextField field = new JTextField(text, columns);
         styleTextField(field);
@@ -508,19 +652,49 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         field.setForeground(TEXT);
         field.setBackground(Color.WHITE);
         field.setCaretColor(PRIMARY_DARK);
-        field.setBorder(new CompoundBorder(new RoundedBorder(BORDER, 10), new EmptyBorder(7, 10, 7, 10)));
+        field.setBorder(new CompoundBorder(new RoundedBorder(BORDER, RADIUS_MD), pad(8, 11, 8, 11)));
+        field.setPreferredSize(new Dimension(field.getPreferredSize().width, INPUT_HEIGHT));
+    }
+
+    private void styleTextArea(JTextArea area) {
+        area.setFont(UI_FONT);
+        area.setForeground(TEXT);
+        area.setBackground(Color.WHITE);
+        area.setCaretColor(PRIMARY_DARK);
+        area.setLineWrap(true);
+        area.setWrapStyleWord(true);
+        area.setBorder(pad(10, 12, 10, 12));
+    }
+
+    private void installMessageShortcuts() {
+        InputMap inputMap = msgWindow.getInputMap();
+        ActionMap actionMap = msgWindow.getActionMap();
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "sendMessage");
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.SHIFT_DOWN_MASK), "insert-break");
+        actionMap.put("sendMessage", new AbstractAction() {
+            public void actionPerformed(ActionEvent e) {
+                send();
+            }
+        });
     }
 
     private JButton createButton(String text, boolean primary) {
         return new StyledButton(text, primary);
     }
 
+    private JButton createToolButton(String text) {
+        JButton button = createButton(text, false);
+        button.setPreferredSize(new Dimension(0, BUTTON_HEIGHT));
+        button.setFont(UI_FONT_BOLD);
+        return button;
+    }
+
     public static void main(String args[]) {
         ChatClient client = new ChatClient();
         client.setTitle(client.appName);
-        client.setSize(960, 640);
-        client.setMinimumSize(new Dimension(780, 520));
-        client.setLocation(100,100);
+        client.setSize(1100, 720);
+        client.setMinimumSize(new Dimension(920, 600));
+        client.setLocationRelativeTo(null);
         client.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         LoginData login = client.showLoginDialog(args);
         if(login == null) {
@@ -924,11 +1098,11 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                 uploadOwnMomentsToServer();
             } else {
                 setConnectionStatus("连接失败，请检查服务端和端口", DANGER);
-                addMsg("<font color=\"#ff0000\">connect failed!</font>");
+                addMsg("<font color=\"#ff0000\">连接失败，请确认服务端已启动、IP 和端口正确。</font>");
             }
         } catch(Exception e) {
             setConnectionStatus("连接错误：" + e.getMessage(), DANGER);
-            addMsg("<font color=\"#ff0000\">connect error: " + escapeHtml(e.getMessage()) + "</font>");
+            addMsg("<font color=\"#ff0000\">连接错误：" + escapeHtml(e.getMessage()) + "</font>");
             e.printStackTrace();
         }
     }
@@ -941,7 +1115,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     }
 
     private boolean isBroadcastConversation(String value) {
-        return value == null || BROADCAST_CHAT.equals(value);
+        return BROADCAST_CHAT.equals(value);
     }
 
     private boolean isGroupConversation(String value) {
@@ -959,7 +1133,14 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
     private void updateSelectedConversation() {
         String selected = onlineList == null ? null : onlineList.getSelectedValue();
-        if(isBroadcastConversation(selected)) {
+        if(selected == null) {
+            selectedChatTarget = null;
+            selectedGroupName = null;
+            if(conversationTitleLabel != null) conversationTitleLabel.setText("选择会话");
+            if(conversationSubtitleLabel != null) conversationSubtitleLabel.setText("从左侧选择好友、群聊或广播");
+            if(conversationAvatar != null) conversationAvatar.setAvatar("?", false);
+            if(buttonFile != null) buttonFile.setEnabled(false);
+        } else if(isBroadcastConversation(selected)) {
             selectedChatTarget = null;
             selectedGroupName = null;
             if(conversationTitleLabel != null) conversationTitleLabel.setText(BROADCAST_CHAT);
@@ -991,6 +1172,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             if(buttonFile != null) buttonFile.setEnabled(online);
         }
         updateAttachmentPreview();
+        updateSendButtonState();
         if(msgWindow != null) msgWindow.requestFocusInWindow();
     }
 
@@ -1017,7 +1199,11 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         boolean hasFile = pendingFile != null;
         if(!hasText && !hasFile) return;
         if(ck == null || !ck.isConnected()) {
-            addMsg("<font color=\"#ff0000\">Please connect first.</font>");
+            addMsg("<font color=\"#ff0000\">请先连接服务器。</font>");
+            return;
+        }
+        if(onlineList != null && onlineList.getSelectedValue() == null) {
+            addMsg("<font color=\"#ff0000\">请先选择一个会话。</font>");
             return;
         }
         if(hasFile) {
@@ -1112,7 +1298,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             return;
         }
         if(ck == null || !ck.isConnected()) {
-            addMsg("<font color=\"#ff0000\">Please connect first.</font>");
+            addMsg("<font color=\"#ff0000\">请先连接服务器。</font>");
             return;
         }
         sentFriendRequests.add(nick);
@@ -1335,7 +1521,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private void showLogPath() {
         if(logFile == null) initLogFile(txtNick.getText());
         if(logFile == null) {
-            addMsg("<font color=\"#ff0000\">Log file is unavailable.</font>");
+            addMsg("<font color=\"#ff0000\">聊天记录文件暂不可用。</font>");
         } else {
             addMsg("<font color=\"#3366cc\">Local log: " + escapeHtml(logFile.toString()) + "</font>");
         }
@@ -1708,7 +1894,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private boolean validateAttachment(File file) {
         if(file == null) return false;
         if(!file.exists() || !file.isFile()) {
-            addMsg("<font color=\"#ff0000\">File not found: " + escapeHtml(file.getPath()) + "</font>");
+            addMsg("<font color=\"#ff0000\">没有找到文件：" + escapeHtml(file.getPath()) + "</font>");
             return false;
         }
         if(file.length() > MAX_FILE_BYTES) {
@@ -1733,6 +1919,15 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             southPanel.revalidate();
             southPanel.repaint();
         }
+        updateSendButtonState();
+    }
+
+    private void updateSendButtonState() {
+        if(buttonSend == null || msgWindow == null) return;
+        boolean hasText = msgWindow.getText() != null && msgWindow.getText().trim().length() > 0;
+        boolean hasFile = pendingFile != null;
+        boolean hasConversation = onlineList != null && onlineList.getSelectedValue() != null;
+        buttonSend.setEnabled((hasText || hasFile) && hasConversation);
     }
 
     private void clearAttachment() {
@@ -1749,7 +1944,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private void sendFileCommand(String command) {
         String[] parts = command.split("\\s+", 3);
         if(parts.length < 3) {
-            addMsg("<font color=\"#ff0000\">usage: /sendfile &lt;nick&gt; &lt;path&gt;</font>");
+            addMsg("<font color=\"#ff0000\">格式：/sendfile &lt;好友名&gt; &lt;文件路径&gt;</font>");
             return;
         }
         sendFileTo(parts[1], new File(parts[2].replace("\"", "")));
@@ -1799,11 +1994,11 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private boolean sendFileTo(String target, File file) {
         try {
             if(ck == null || !ck.isConnected()) {
-                addMsg("<font color=\"#ff0000\">Please connect first.</font>");
+                addMsg("<font color=\"#ff0000\">请先连接服务器。</font>");
                 return false;
             }
             if(!file.exists() || !file.isFile()) {
-                addMsg("<font color=\"#ff0000\">File not found: " + escapeHtml(file.getPath()) + "</font>");
+                addMsg("<font color=\"#ff0000\">没有找到文件：" + escapeHtml(file.getPath()) + "</font>");
                 return false;
             }
             byte[] data = Files.readAllBytes(file.toPath());
@@ -1818,7 +2013,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                     file.getName(), data.length, data, LocalDateTime.now().format(displayTime)));
             return true;
         } catch(Exception e) {
-            addMsg("<font color=\"#ff0000\">send file failed: " + escapeHtml(e.getMessage()) + "</font>");
+            addMsg("<font color=\"#ff0000\">文件发送失败：" + escapeHtml(e.getMessage()) + "</font>");
             return false;
         }
     }
@@ -1826,19 +2021,22 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private void rebuildConversationList(String preferredSelection) {
         if(userModel == null) return;
         String ownNick = txtNick == null ? "" : txtNick.getText().trim();
+        String filter = conversationFilterText();
         userModel.clear();
-        userModel.addElement(BROADCAST_CHAT);
+        if(matchesConversation(BROADCAST_CHAT, filter)) userModel.addElement(BROADCAST_CHAT);
 
         Iterator<String> groupIt = chatGroups.keySet().iterator();
         while(groupIt.hasNext()) {
-            userModel.addElement(groupLabel(groupIt.next()));
+            String label = groupLabel(groupIt.next());
+            if(matchesConversation(label, filter)) userModel.addElement(label);
         }
 
         java.util.List<String> onlineUsers = new ArrayList<String>(visibleUsers);
         Collections.sort(onlineUsers, String.CASE_INSENSITIVE_ORDER);
         for(int i=0;i<onlineUsers.size();i++) {
             String user = onlineUsers.get(i);
-            if(user.length() > 0 && !user.equalsIgnoreCase(ownNick) && !modelContains(user)) {
+            if(user.length() > 0 && !user.equalsIgnoreCase(ownNick)
+                    && matchesConversation(user, filter) && !modelContains(user)) {
                 userModel.addElement(user);
             }
         }
@@ -1847,17 +2045,41 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         Collections.sort(savedFriends, String.CASE_INSENSITIVE_ORDER);
         for(int i=0;i<savedFriends.size();i++) {
             String friend = savedFriends.get(i);
-            if(friend.length() > 0 && !friend.equalsIgnoreCase(ownNick) && !modelContains(friend)) {
+            if(friend.length() > 0 && !friend.equalsIgnoreCase(ownNick)
+                    && matchesConversation(friend, filter) && !modelContains(friend)) {
                 userModel.addElement(friend);
             }
         }
 
-        if(preferredSelection != null && modelContains(preferredSelection)) {
+        showConversationListState(userModel.size() == 0);
+        if(userModel.size() == 0) {
+            onlineList.clearSelection();
+        } else if(preferredSelection != null && modelContains(preferredSelection)) {
             onlineList.setSelectedValue(preferredSelection, true);
         } else {
             onlineList.setSelectedIndex(0);
         }
         updateSelectedConversation();
+    }
+
+    private void filterConversations() {
+        String preferred = onlineList == null ? null : onlineList.getSelectedValue();
+        rebuildConversationList(preferred);
+    }
+
+    private String conversationFilterText() {
+        return conversationSearchField == null ? "" : conversationSearchField.getText().trim().toLowerCase(Locale.ROOT);
+    }
+
+    private boolean matchesConversation(String value, String filter) {
+        if(filter == null || filter.length() == 0) return true;
+        return value != null && value.toLowerCase(Locale.ROOT).contains(filter);
+    }
+
+    private void showConversationListState(boolean empty) {
+        if(conversationListPanel == null) return;
+        CardLayout layout = (CardLayout)conversationListPanel.getLayout();
+        layout.show(conversationListPanel, empty ? "empty" : "list");
     }
 
     private boolean modelContains(String value) {
@@ -1899,7 +2121,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             historyWindow.addMessage(ChatMessage.file(MessageKind.INCOMING, sender,
                     filename, data.length, data, LocalDateTime.now().format(displayTime)));
         } catch(Exception e) {
-            addMsg("<font color=\"#ff0000\">receive file failed: " + escapeHtml(e.getMessage()) + "</font>");
+            addMsg("<font color=\"#ff0000\">接收文件失败：" + escapeHtml(e.getMessage()) + "</font>");
         }
     }
 
@@ -1944,7 +2166,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
     public void keyTyped(KeyEvent e) {
         if(e.getKeyChar() == KeyEvent.VK_ENTER) {
-            if(e.getSource() == msgWindow) send();
+            if(e.getSource() == msgWindow) return;
             if(e.getSource() == txtNick) { connect(); msgWindow.requestFocus(); }
             if(e.getSource() == txtHost) txtPort.requestFocus();
             if(e.getSource() == txtPort) txtNick.requestFocus();
@@ -2070,22 +2292,23 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
 
         private JPanel createMomentsHeader() {
-            JPanel header = new JPanel(new BorderLayout(12, 12));
-            header.setBackground(Color.WHITE);
+            JPanel header = new CoverPanel();
+            header.setLayout(new BorderLayout(SPACE_MD, SPACE_MD));
             header.setBorder(new CompoundBorder(
-                    new MatteBorder(0, 0, 1, 0, new Color(226, 232, 240)),
-                    new EmptyBorder(16, 20, 14, 20)));
+                    new MatteBorder(0, 0, 1, 0, BORDER_LIGHT),
+                    pad(SPACE_LG, SPACE_XL, SPACE_LG, SPACE_XL)));
+            header.setPreferredSize(new Dimension(0, 150));
 
             JPanel titleRow = new JPanel(new BorderLayout());
             titleRow.setOpaque(false);
             JLabel title = new JLabel("朋友圈");
-            title.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 22));
-            title.setForeground(TEXT);
-            JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+            title.setFont(PAGE_TITLE_FONT);
+            title.setForeground(Color.WHITE);
+            JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, SPACE_SM, 0));
             actions.setOpaque(false);
             JButton refreshButton = smallButton("刷新");
             JButton composeButton = createButton("发布动态", true);
-            composeButton.setPreferredSize(new Dimension(96, 34));
+            composeButton.setPreferredSize(new Dimension(96, BUTTON_HEIGHT));
             refreshButton.addActionListener(new ActionListener() {
                 public void actionPerformed(ActionEvent e) {
                     refreshFeed();
@@ -2104,20 +2327,20 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             titleRow.add(title, BorderLayout.WEST);
             titleRow.add(actions, BorderLayout.EAST);
 
-            JPanel profile = new JPanel(new BorderLayout(12, 0));
+            JPanel profile = new JPanel(new BorderLayout(SPACE_MD, 0));
             profile.setOpaque(false);
             profile.add(new AvatarView(currentUser, false), BorderLayout.WEST);
             JPanel textBlock = new JPanel();
             textBlock.setOpaque(false);
             textBlock.setLayout(new BoxLayout(textBlock, BoxLayout.Y_AXIS));
             JLabel name = new JLabel(currentProfile.getProperty("displayName", currentUser));
-            name.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 15));
-            name.setForeground(TEXT);
+            name.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 16));
+            name.setForeground(Color.WHITE);
             JLabel signature = new JLabel(currentProfile.getProperty("signature", "这个人还没有写个性签名。"));
-            signature.setFont(UI_FONT);
-            signature.setForeground(MUTED);
+            signature.setFont(UI_FONT_SMALL);
+            signature.setForeground(new Color(226, 232, 240));
             textBlock.add(name);
-            textBlock.add(Box.createVerticalStrut(3));
+            textBlock.add(Box.createVerticalStrut(SPACE_XS));
             textBlock.add(signature);
             profile.add(textBlock, BorderLayout.CENTER);
 
@@ -2127,15 +2350,15 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
 
         private JPanel createMomentsCenter() {
-            JPanel center = new JPanel(new BorderLayout(0, 12));
+            JPanel center = new JPanel(new BorderLayout(0, SPACE_MD));
             center.setBackground(CHAT_BACKGROUND);
-            center.setBorder(new EmptyBorder(14, 16, 16, 16));
+            center.setBorder(pad(SPACE_LG));
 
             JPanel top = new JPanel();
             top.setOpaque(false);
             top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
             top.add(createSearchPanel());
-            top.add(Box.createVerticalStrut(10));
+            top.add(Box.createVerticalStrut(SPACE_MD));
             composerPanel = createComposerPanel();
             composerPanel.setVisible(false);
             top.add(composerPanel);
@@ -2144,10 +2367,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             feedPanel = new JPanel();
             feedPanel.setBackground(CHAT_BACKGROUND);
             feedPanel.setLayout(new BoxLayout(feedPanel, BoxLayout.Y_AXIS));
-            JScrollPane scroll = new JScrollPane(feedPanel);
-            scroll.setBorder(null);
-            scroll.getViewport().setBackground(CHAT_BACKGROUND);
-            scroll.getVerticalScrollBar().setUnitIncrement(18);
+            JScrollPane scroll = createModernScrollPane(feedPanel, CHAT_BACKGROUND);
             center.add(scroll, BorderLayout.CENTER);
             return center;
         }
@@ -2155,7 +2375,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         private JPanel createSearchPanel() {
             JPanel panel = new JPanel(new BorderLayout(8, 0));
             panel.setOpaque(false);
-            searchField = new PromptTextField("", 20, "搜索自己的动态");
+            searchField = new PromptTextField("", 20, "搜索动态或评论");
             styleTextField(searchField);
             searchField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
                 public void insertUpdate(javax.swing.event.DocumentEvent e) { refreshFeed(); }
@@ -2167,9 +2387,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
 
         private JPanel createComposerPanel() {
-            BubblePanel panel = new BubblePanel(Color.WHITE, new Color(226, 232, 240), 18);
-            panel.setLayout(new BorderLayout(10, 10));
-            panel.setBorder(new EmptyBorder(12, 14, 12, 14));
+            BubblePanel panel = createCardPanel(SPACE_MD);
+            panel.setLayout(new BorderLayout(SPACE_MD, SPACE_MD));
 
             JLabel title = new JLabel("发布新动态");
             title.setFont(UI_FONT_BOLD);
@@ -2181,23 +2400,23 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             editor.setForeground(TEXT);
             editor.setLineWrap(true);
             editor.setWrapStyleWord(true);
-            editor.setBorder(new EmptyBorder(8, 8, 8, 8));
+            editor.setBorder(pad(SPACE_SM));
             editor.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
                 public void insertUpdate(javax.swing.event.DocumentEvent e) { updateComposerState(); }
                 public void removeUpdate(javax.swing.event.DocumentEvent e) { updateComposerState(); }
                 public void changedUpdate(javax.swing.event.DocumentEvent e) { updateComposerState(); }
             });
             JScrollPane editorScroll = new JScrollPane(editor);
-            editorScroll.setBorder(new RoundedBorder(BORDER, 12));
+            editorScroll.setBorder(new RoundedBorder(BORDER, RADIUS_MD));
             panel.add(editorScroll, BorderLayout.CENTER);
 
             JPanel footer = new JPanel(new BorderLayout());
             footer.setOpaque(false);
-            countLabel = new JLabel("还可输入 " + MOMENT_TEXT_LIMIT + " 字");
-            countLabel.setFont(new Font("Microsoft YaHei UI", Font.PLAIN, 12));
+            countLabel = new JLabel("0/" + MOMENT_TEXT_LIMIT);
+            countLabel.setFont(UI_FONT_SMALL);
             countLabel.setForeground(MUTED);
             tipLabel = new JLabel(" ");
-            tipLabel.setFont(new Font("Microsoft YaHei UI", Font.PLAIN, 12));
+            tipLabel.setFont(UI_FONT_SMALL);
             tipLabel.setForeground(SUCCESS);
             JPanel left = new JPanel();
             left.setOpaque(false);
@@ -2233,7 +2452,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
         private void updateComposerState() {
             int remain = MOMENT_TEXT_LIMIT - editor.getText().length();
-            countLabel.setText(remain >= 0 ? "还可输入 " + remain + " 字" : "已超出 " + Math.abs(remain) + " 字");
+            countLabel.setText(editor.getText().length() + "/" + MOMENT_TEXT_LIMIT
+                    + (remain < 0 ? "，已超出 " + Math.abs(remain) + " 字" : ""));
             countLabel.setForeground(remain >= 0 ? MUTED : DANGER);
             publishButton.setEnabled(editor.getText().trim().length() > 0 && remain >= 0);
         }
@@ -2285,23 +2505,12 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
 
         private Component createEmptyMomentsPanel() {
-            JPanel wrapper = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 42));
-            wrapper.setOpaque(false);
-            BubblePanel empty = new BubblePanel(Color.WHITE, new Color(226, 232, 240), 18);
-            empty.setLayout(new BorderLayout());
-            empty.setBorder(new EmptyBorder(24, 34, 24, 34));
-            JLabel label = new JLabel("还没有动态，发布第一条吧");
-            label.setFont(new Font("Microsoft YaHei UI", Font.PLAIN, 15));
-            label.setForeground(MUTED);
-            empty.add(label, BorderLayout.CENTER);
-            wrapper.add(empty);
-            return wrapper;
+            return createEmptyState("还没有动态", "发布第一条，或者刷新好友朋友圈");
         }
 
         private Component createMomentCard(final Moment moment) {
-            BubblePanel card = new BubblePanel(Color.WHITE, new Color(226, 232, 240), 18);
-            card.setLayout(new BorderLayout(0, 10));
-            card.setBorder(new EmptyBorder(14, 14, 12, 14));
+            BubblePanel card = createCardPanel(SPACE_LG);
+            card.setLayout(new BorderLayout(0, SPACE_MD));
             card.setAlignmentX(Component.LEFT_ALIGNMENT);
 
             card.add(createMomentCardHeader(moment), BorderLayout.NORTH);
@@ -2314,10 +2523,10 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             text.setFont(new Font("Microsoft YaHei UI", Font.PLAIN, 14));
             text.setForeground(TEXT);
             body.add(text);
-            body.add(Box.createVerticalStrut(10));
+            body.add(Box.createVerticalStrut(SPACE_MD));
             body.add(createMomentActions(moment));
             if(moment.likes.size() > 0 || moment.comments.size() > 0) {
-                body.add(Box.createVerticalStrut(8));
+                body.add(Box.createVerticalStrut(SPACE_SM));
                 body.add(createMomentSocialPanel(moment));
             }
             card.add(body, BorderLayout.CENTER);
@@ -2326,7 +2535,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
 
         private Component createMomentCardHeader(Moment moment) {
-            JPanel header = new JPanel(new BorderLayout(10, 0));
+            JPanel header = new JPanel(new BorderLayout(SPACE_MD, 0));
             header.setOpaque(false);
             header.add(new AvatarView(moment.author, false), BorderLayout.WEST);
             JPanel textBlock = new JPanel();
@@ -2336,10 +2545,10 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             author.setFont(UI_FONT_BOLD);
             author.setForeground(TEXT);
             JLabel time = new JLabel(moment.time);
-            time.setFont(new Font("Microsoft YaHei UI", Font.PLAIN, 12));
+            time.setFont(UI_FONT_SMALL);
             time.setForeground(MUTED);
             textBlock.add(author);
-            textBlock.add(Box.createVerticalStrut(2));
+            textBlock.add(Box.createVerticalStrut(SPACE_XS));
             textBlock.add(time);
             header.add(textBlock, BorderLayout.CENTER);
             return header;
@@ -2348,7 +2557,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         private Component createMomentActions(final Moment moment) {
             JPanel row = new JPanel(new BorderLayout());
             row.setOpaque(false);
-            JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+            JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, SPACE_SM, 0));
             buttons.setOpaque(false);
             boolean liked = moment.likes.contains(currentUser);
             JButton likeButton = smallButton(liked ? "取消点赞" : "点赞");
@@ -2390,12 +2599,12 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
 
         private Component createMomentSocialPanel(Moment moment) {
-            BubblePanel panel = new BubblePanel(new Color(248, 250, 252), new Color(226, 232, 240), 14);
+            BubblePanel panel = new BubblePanel(SURFACE_SOFT, BORDER_LIGHT, RADIUS_MD);
             panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
-            panel.setBorder(new EmptyBorder(8, 10, 8, 10));
+            panel.setBorder(pad(SPACE_SM, SPACE_MD, SPACE_SM, SPACE_MD));
             if(moment.likes.size() > 0) {
                 JLabel likes = new JLabel("点赞 " + moment.likes.size() + " · " + membersToCsv(moment.likes));
-                likes.setFont(new Font("Microsoft YaHei UI", Font.PLAIN, 12));
+                likes.setFont(UI_FONT_SMALL);
                 likes.setForeground(PRIMARY_DARK);
                 panel.add(likes);
             }
@@ -2406,7 +2615,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                         + htmlText(comment.text)
                         + " <span style=\"color:#64748b;font-size:10px;\">"
                         + escapeHtml(comment.time) + "</span></div></html>");
-                line.setFont(new Font("Microsoft YaHei UI", Font.PLAIN, 12));
+                line.setFont(UI_FONT_SMALL);
                 line.setForeground(TEXT);
                 if(i > 0 || moment.likes.size() > 0) panel.add(Box.createVerticalStrut(5));
                 panel.add(line);
@@ -2419,9 +2628,9 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             area.setFont(UI_FONT);
             area.setLineWrap(true);
             area.setWrapStyleWord(true);
-            area.setBorder(new EmptyBorder(8, 8, 8, 8));
+            area.setBorder(pad(SPACE_SM));
             JScrollPane scroll = new JScrollPane(area);
-            scroll.setBorder(new RoundedBorder(BORDER, 12));
+            scroll.setBorder(new RoundedBorder(BORDER, RADIUS_MD));
             int option = JOptionPane.showConfirmDialog(this, scroll, "评论",
                     JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
             if(option != JOptionPane.OK_OPTION) return;
@@ -2434,7 +2643,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
         private JButton smallButton(String text) {
             JButton button = createButton(text, false);
-            button.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 12));
+            button.setFont(UI_FONT_BOLD);
             button.setPreferredSize(new Dimension(58, 30));
             return button;
         }
@@ -2466,7 +2675,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             super(owner, "登录 / 注册", true);
             setDefaultCloseOperation(DISPOSE_ON_CLOSE);
             setResizable(false);
-            setSize(440, 540);
+            setSize(460, 570);
             setLocationRelativeTo(owner);
 
             loginUserField = new PromptTextField(username, 18, "请输入用户名");
@@ -2491,11 +2700,11 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         private JPanel createLoginContent() {
             JPanel root = new JPanel(new BorderLayout());
             root.setBackground(APP_BACKGROUND);
-            root.setBorder(new EmptyBorder(18, 18, 18, 18));
+            root.setBorder(pad(SPACE_XL));
 
-            BubblePanel card = new BubblePanel(Color.WHITE, new Color(226, 232, 240), 22);
-            card.setLayout(new BorderLayout(0, 14));
-            card.setBorder(new EmptyBorder(22, 24, 22, 24));
+            BubblePanel card = new BubblePanel(SURFACE, BORDER_LIGHT, RADIUS_XL);
+            card.setLayout(new BorderLayout(0, SPACE_LG));
+            card.setBorder(pad(24));
             card.add(createLoginHeader(), BorderLayout.NORTH);
             card.add(createLoginCenter(), BorderLayout.CENTER);
             card.add(createLoginFooter(), BorderLayout.SOUTH);
@@ -2504,7 +2713,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
 
         private JPanel createLoginHeader() {
-            JPanel header = new JPanel(new BorderLayout(12, 0));
+            JPanel header = new JPanel(new BorderLayout(SPACE_MD, 0));
             header.setOpaque(false);
             header.add(new AvatarView("C", false), BorderLayout.WEST);
 
@@ -2512,13 +2721,13 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             textBlock.setOpaque(false);
             textBlock.setLayout(new BoxLayout(textBlock, BoxLayout.Y_AXIS));
             JLabel title = new JLabel("CNCD Chat");
-            title.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 24));
+            title.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 25));
             title.setForeground(TEXT);
             JLabel subtitle = new JLabel("登录后继续你的好友、群聊和朋友圈");
-            subtitle.setFont(UI_FONT);
+            subtitle.setFont(UI_FONT_SMALL);
             subtitle.setForeground(MUTED);
             textBlock.add(title);
-            textBlock.add(Box.createVerticalStrut(4));
+            textBlock.add(Box.createVerticalStrut(SPACE_XS));
             textBlock.add(subtitle);
             header.add(textBlock, BorderLayout.CENTER);
             return header;
@@ -2531,6 +2740,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
             modeTabs = new JTabbedPane();
             modeTabs.setFont(UI_FONT_BOLD);
+            modeTabs.setBackground(SURFACE);
+            modeTabs.setForeground(TEXT);
             modeTabs.addTab("登录", createAccountForm(loginUserField, loginPasswordField));
             modeTabs.addTab("注册", createAccountForm(registerUserField, registerPasswordField));
             modeTabs.addChangeListener(new javax.swing.event.ChangeListener() {
@@ -2541,7 +2752,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             });
 
             advancedButton = createButton("高级设置", false);
-            advancedButton.setPreferredSize(new Dimension(96, 32));
+            advancedButton.setPreferredSize(new Dimension(96, BUTTON_HEIGHT));
             advancedButton.addActionListener(new ActionListener() {
                 public void actionPerformed(ActionEvent e) {
                     advancedPanel.setVisible(!advancedPanel.isVisible());
@@ -2554,15 +2765,15 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             advancedPanel.setVisible(false);
 
             statusLabel = new JLabel(" ");
-            statusLabel.setFont(new Font("Microsoft YaHei UI", Font.PLAIN, 12));
+            statusLabel.setFont(UI_FONT_SMALL);
             statusLabel.setForeground(DANGER);
 
             center.add(modeTabs);
-            center.add(Box.createVerticalStrut(10));
+            center.add(Box.createVerticalStrut(SPACE_MD));
             center.add(advancedButton);
-            center.add(Box.createVerticalStrut(8));
+            center.add(Box.createVerticalStrut(SPACE_SM));
             center.add(advancedPanel);
-            center.add(Box.createVerticalStrut(6));
+            center.add(Box.createVerticalStrut(SPACE_SM));
             center.add(statusLabel);
             return center;
         }
@@ -2570,16 +2781,16 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         private JPanel createAccountForm(JTextField userField, JPasswordField passwordField) {
             JPanel form = new JPanel();
             form.setOpaque(false);
-            form.setBorder(new EmptyBorder(12, 0, 8, 0));
+            form.setBorder(pad(SPACE_MD, 0, SPACE_SM, 0));
             form.setLayout(new BoxLayout(form, BoxLayout.Y_AXIS));
             form.add(createStackedField("用户名", userField));
-            form.add(Box.createVerticalStrut(12));
+            form.add(Box.createVerticalStrut(SPACE_MD));
             form.add(createPasswordRow(passwordField));
             return form;
         }
 
         private JPanel createStackedField(String label, JComponent input) {
-            JPanel panel = new JPanel(new BorderLayout(0, 6));
+            JPanel panel = new JPanel(new BorderLayout(0, SPACE_SM));
             panel.setOpaque(false);
             JLabel textLabel = new JLabel(label);
             textLabel.setFont(UI_FONT_BOLD);
@@ -2590,7 +2801,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
 
         private JPanel createPasswordRow(final JPasswordField passwordField) {
-            JPanel row = new JPanel(new BorderLayout(8, 6));
+            JPanel row = new JPanel(new BorderLayout(SPACE_SM, SPACE_SM));
             row.setOpaque(false);
             JLabel label = new JLabel("密码");
             label.setFont(UI_FONT_BOLD);
@@ -2598,7 +2809,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             row.add(label, BorderLayout.NORTH);
 
             final JButton toggle = createButton("显示", false);
-            toggle.setPreferredSize(new Dimension(64, 34));
+            toggle.setPreferredSize(new Dimension(64, BUTTON_HEIGHT));
             final char echoChar = passwordField.getEchoChar();
             toggle.addActionListener(new ActionListener() {
                 public void actionPerformed(ActionEvent e) {
@@ -2608,7 +2819,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                 }
             });
 
-            JPanel inputRow = new JPanel(new BorderLayout(8, 0));
+            JPanel inputRow = new JPanel(new BorderLayout(SPACE_SM, 0));
             inputRow.setOpaque(false);
             inputRow.add(passwordField, BorderLayout.CENTER);
             inputRow.add(toggle, BorderLayout.EAST);
@@ -2617,11 +2828,11 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
 
         private JPanel createAdvancedPanel() {
-            JPanel panel = new JPanel(new BorderLayout(10, 0));
+            JPanel panel = new JPanel(new BorderLayout(SPACE_MD, 0));
             panel.setOpaque(false);
             panel.setBorder(new CompoundBorder(
-                    new RoundedBorder(new Color(226, 232, 240), 14),
-                    new EmptyBorder(8, 8, 8, 8)));
+                    new RoundedBorder(BORDER_LIGHT, RADIUS_LG),
+                    pad(SPACE_SM)));
             portField.setPreferredSize(new Dimension(82, 34));
             JPanel hostBlock = createStackedField("服务器", hostField);
             JPanel portBlock = createStackedField("端口", portField);
@@ -2638,8 +2849,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             buttons.setOpaque(false);
             JButton cancelButton = createButton("取消", false);
             primaryButton = createButton("登录", true);
-            primaryButton.setPreferredSize(new Dimension(108, 36));
-            cancelButton.setPreferredSize(new Dimension(76, 36));
+            primaryButton.setPreferredSize(new Dimension(112, 40));
+            cancelButton.setPreferredSize(new Dimension(78, 40));
             cancelButton.addActionListener(new ActionListener() {
                 public void actionPerformed(ActionEvent e) {
                     loginData = null;
@@ -2748,6 +2959,29 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
     }
 
+    class PromptTextArea extends JTextArea {
+        private String prompt;
+
+        PromptTextArea(String prompt) {
+            super();
+            this.prompt = prompt;
+        }
+
+        protected void paintComponent(Graphics g) {
+            super.paintComponent(g);
+            if(prompt == null || prompt.length() == 0 || getText().length() > 0) return;
+            Graphics2D g2 = (Graphics2D)g.create();
+            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,
+                    RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            g2.setFont(getFont());
+            g2.setColor(SOFT_MUTED);
+            Insets insets = getInsets();
+            FontMetrics fm = g2.getFontMetrics();
+            g2.drawString(prompt, insets.left + 1, insets.top + fm.getAscent());
+            g2.dispose();
+        }
+    }
+
     class PromptPasswordField extends JPasswordField {
         private String prompt;
 
@@ -2783,8 +3017,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             setFocusPainted(false);
             setOpaque(false);
             setContentAreaFilled(false);
-            setBorder(new EmptyBorder(7, 14, 7, 14));
-            setPreferredSize(new Dimension(primary ? 86 : 92, 34));
+            setBorder(pad(7, 14, 7, 14));
+            setPreferredSize(new Dimension(primary ? 86 : 92, BUTTON_HEIGHT));
             setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             addMouseListener(new MouseAdapter() {
                 public void mouseEntered(MouseEvent e) {
@@ -2805,22 +3039,22 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             Color fill;
             Color stroke;
             if(!isEnabled()) {
-                fill = new Color(226, 232, 240);
-                stroke = new Color(203, 213, 225);
+                fill = new Color(232, 237, 245);
+                stroke = BORDER_LIGHT;
                 setForeground(SOFT_MUTED);
             } else if(primary) {
                 fill = hover ? PRIMARY_DARK : PRIMARY;
                 stroke = PRIMARY_DARK;
                 setForeground(Color.WHITE);
             } else {
-                fill = hover ? new Color(239, 246, 255) : Color.WHITE;
-                stroke = hover ? new Color(147, 197, 253) : BORDER;
+                fill = hover ? PRIMARY_SOFT : SURFACE;
+                stroke = hover ? new Color(147, 197, 253) : BORDER_LIGHT;
                 setForeground(TEXT);
             }
             g2.setColor(fill);
-            g2.fillRoundRect(1, 1, getWidth() - 2, getHeight() - 2, 18, 18);
+            g2.fillRoundRect(1, 1, getWidth() - 2, getHeight() - 2, RADIUS_LG, RADIUS_LG);
             g2.setColor(stroke);
-            g2.drawRoundRect(1, 1, getWidth() - 3, getHeight() - 3, 18, 18);
+            g2.drawRoundRect(1, 1, getWidth() - 3, getHeight() - 3, RADIUS_LG, RADIUS_LG);
             g2.dispose();
             super.paintComponent(g);
         }
@@ -2868,6 +3102,27 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
     }
 
+    class CoverPanel extends JPanel {
+        CoverPanel() {
+            setOpaque(false);
+        }
+
+        protected void paintComponent(Graphics g) {
+            Graphics2D g2 = (Graphics2D)g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            GradientPaint paint = new GradientPaint(0, 0, PRIMARY_DARK,
+                    getWidth(), getHeight(), new Color(13, 148, 136));
+            g2.setPaint(paint);
+            g2.fillRect(0, 0, getWidth(), getHeight());
+            g2.setColor(new Color(255, 255, 255, 32));
+            g2.fillRoundRect(getWidth() - 140, -30, 180, 180, 90, 90);
+            g2.setColor(new Color(255, 255, 255, 22));
+            g2.fillRoundRect(-40, getHeight() - 75, 150, 150, 80, 80);
+            g2.dispose();
+            super.paintComponent(g);
+        }
+    }
+
     class ConversationRenderer extends JPanel implements ListCellRenderer<String> {
         private AvatarView avatar = new AvatarView("?", false);
         private JLabel nameLabel = new JLabel();
@@ -2878,13 +3133,13 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         private boolean hoverRow = false;
 
         ConversationRenderer() {
-            setLayout(new BorderLayout(10, 0));
-            setBorder(new EmptyBorder(6, 8, 6, 8));
+            setLayout(new BorderLayout(SPACE_MD, 0));
+            setBorder(pad(7, 8, 7, 8));
             textPanel.setOpaque(false);
             textPanel.setLayout(new BoxLayout(textPanel, BoxLayout.Y_AXIS));
             nameLabel.setFont(UI_FONT_BOLD);
-            detailLabel.setFont(new Font("Microsoft YaHei UI", Font.PLAIN, 12));
-            stateDot.setFont(new Font("Dialog", Font.BOLD, 10));
+            detailLabel.setFont(UI_FONT_SMALL);
+            stateDot.setFont(new Font("Dialog", Font.BOLD, 12));
             textPanel.add(nameLabel);
             textPanel.add(Box.createVerticalStrut(2));
             textPanel.add(detailLabel);
@@ -2907,7 +3162,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                 int memberCount = members == null ? 1 : members.size();
                 nameLabel.setText(groupName);
                 detailLabel.setText("群聊 · " + memberCount + " 人 · " + countOnlineMembers(members) + " 人在线");
-                stateDot.setForeground(new Color(15, 118, 110));
+                stateDot.setForeground(new Color(13, 148, 136));
             } else {
                 nameLabel.setText(name);
                 if(friends.contains(name)) {
@@ -2946,8 +3201,12 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             Graphics2D g2 = (Graphics2D)g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             if(selectedRow || hoverRow) {
-                g2.setColor(selectedRow ? PRIMARY_LIGHT : new Color(248, 250, 252));
-                g2.fillRoundRect(2, 3, getWidth() - 4, getHeight() - 6, 18, 18);
+                g2.setColor(selectedRow ? PRIMARY_LIGHT : SURFACE_SOFT);
+                g2.fillRoundRect(2, 3, getWidth() - 4, getHeight() - 6, RADIUS_LG, RADIUS_LG);
+                if(selectedRow) {
+                    g2.setColor(new Color(147, 197, 253));
+                    g2.fillRoundRect(3, 13, 3, getHeight() - 26, 3, 3);
+                }
             }
             g2.dispose();
             super.paintComponent(g);
@@ -2955,13 +3214,20 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     }
 
     class ClientHistory extends JPanel {
+        private boolean showingEmptyState = false;
+
         public ClientHistory() {
             setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
             setBackground(CHAT_BACKGROUND);
-            setBorder(new EmptyBorder(10, 10, 10, 10));
+            setBorder(pad(SPACE_SM));
+            showEmptyState();
         }
 
         public void addMessage(ChatMessage message) {
+            if(showingEmptyState) {
+                removeAll();
+                showingEmptyState = false;
+            }
             Component row = message.kind == MessageKind.SYSTEM
                     ? createSystemRow(message)
                     : createChatRow(message);
@@ -2986,12 +3252,12 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             row.setAlignmentX(Component.LEFT_ALIGNMENT);
             row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 34));
             JLabel label = new JLabel(message.time + "  " + message.body);
-            label.setFont(new Font("Microsoft YaHei UI", Font.PLAIN, 12));
+            label.setFont(UI_FONT_SMALL);
             label.setForeground(MUTED);
             label.setOpaque(false);
-            BubblePanel pill = new BubblePanel(new Color(232, 236, 243), new Color(222, 228, 238), 18);
+            BubblePanel pill = new BubblePanel(new Color(235, 240, 247), BORDER_LIGHT, RADIUS_XL);
             pill.setLayout(new BorderLayout());
-            pill.setBorder(new EmptyBorder(5, 12, 5, 12));
+            pill.setBorder(pad(5, 12, 5, 12));
             pill.add(label, BorderLayout.CENTER);
             row.add(pill);
             return row;
@@ -3002,7 +3268,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             JPanel row = new JPanel(new BorderLayout());
             row.setOpaque(false);
             row.setAlignmentX(Component.LEFT_ALIGNMENT);
-            row.setBorder(new EmptyBorder(2, 0, 4, 0));
+            row.setBorder(pad(3, 0, 5, 0));
 
             JPanel pack = new JPanel();
             pack.setOpaque(false);
@@ -3031,7 +3297,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             block.setLayout(new BoxLayout(block, BoxLayout.Y_AXIS));
 
             JLabel name = new JLabel((outgoing ? "我 / " : "") + message.sender + "  " + message.time);
-            name.setFont(new Font("Microsoft YaHei UI", Font.PLAIN, 12));
+            name.setFont(UI_FONT_SMALL);
             name.setForeground(MUTED);
             name.setAlignmentX(outgoing ? Component.RIGHT_ALIGNMENT : Component.LEFT_ALIGNMENT);
 
@@ -3045,19 +3311,19 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             text.setForeground(TEXT);
 
             JPanel bubble = new BubblePanel(outgoing ? OUTGOING_BUBBLE : INCOMING_BUBBLE,
-                    outgoing ? new Color(147, 197, 253) : BORDER,
-                    16);
+                    outgoing ? new Color(147, 197, 253) : BORDER_LIGHT,
+                    RADIUS_LG);
             bubble.setLayout(new BorderLayout());
-            bubble.setBorder(new EmptyBorder(9, 11, 9, 11));
+            bubble.setBorder(pad(10, 12, 10, 12));
             bubble.add(text, BorderLayout.CENTER);
             Dimension bubbleSize = bubble.getPreferredSize();
             bubble.setMaximumSize(new Dimension(bubbleSize.width, bubbleSize.height));
             bubble.setAlignmentX(outgoing ? Component.RIGHT_ALIGNMENT : Component.LEFT_ALIGNMENT);
 
             block.add(name);
-            block.add(Box.createVerticalStrut(3));
+            block.add(Box.createVerticalStrut(SPACE_XS));
             block.add(bubble);
-            block.setMaximumSize(new Dimension(430, block.getPreferredSize().height));
+            block.setMaximumSize(new Dimension(470, block.getPreferredSize().height));
             return block;
         }
 
@@ -3091,19 +3357,19 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             block.setLayout(new BoxLayout(block, BoxLayout.Y_AXIS));
 
             final BubblePanel card = new BubblePanel(outgoing ? OUTGOING_BUBBLE : INCOMING_BUBBLE,
-                    outgoing ? new Color(147, 197, 253) : BORDER,
-                    16);
-            card.setLayout(new BorderLayout(10, 0));
-            card.setBorder(new EmptyBorder(10, 12, 10, 12));
-            card.setMaximumSize(new Dimension(270, 78));
-            card.setPreferredSize(new Dimension(270, 78));
+                    outgoing ? new Color(147, 197, 253) : BORDER_LIGHT,
+                    RADIUS_LG);
+            card.setLayout(new BorderLayout(SPACE_MD, 0));
+            card.setBorder(pad(11, 12, 11, 12));
+            card.setMaximumSize(new Dimension(292, 82));
+            card.setPreferredSize(new Dimension(292, 82));
 
             JLabel icon = new JLabel(mediaBadge(message.fileName));
             icon.setFont(new Font("Dialog", Font.BOLD, 11));
             icon.setForeground(outgoing ? PRIMARY_DARK : new Color(15, 118, 110));
             icon.setHorizontalAlignment(SwingConstants.CENTER);
-            icon.setPreferredSize(new Dimension(48, 44));
-            icon.setBorder(new RoundedBorder(outgoing ? new Color(147, 197, 253) : BORDER, 10));
+            icon.setPreferredSize(new Dimension(50, 46));
+            icon.setBorder(new RoundedBorder(outgoing ? new Color(147, 197, 253) : BORDER, RADIUS_MD));
 
             JPanel textPanel = new JPanel();
             textPanel.setOpaque(false);
@@ -3112,10 +3378,10 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             fileName.setFont(UI_FONT_BOLD);
             fileName.setForeground(TEXT);
             final JLabel fileMeta = new JLabel(fileStatusText(message, outgoing));
-            fileMeta.setFont(new Font("Microsoft YaHei UI", Font.PLAIN, 12));
+            fileMeta.setFont(UI_FONT_SMALL);
             fileMeta.setForeground(outgoing ? PRIMARY_DARK : MUTED);
             textPanel.add(fileName);
-            textPanel.add(Box.createVerticalStrut(4));
+            textPanel.add(Box.createVerticalStrut(SPACE_XS));
             textPanel.add(fileMeta);
 
             card.add(icon, BorderLayout.WEST);
@@ -3132,9 +3398,9 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
             card.setAlignmentX(outgoing ? Component.RIGHT_ALIGNMENT : Component.LEFT_ALIGNMENT);
             block.add(name);
-            block.add(Box.createVerticalStrut(3));
+            block.add(Box.createVerticalStrut(SPACE_XS));
             block.add(card);
-            block.setMaximumSize(new Dimension(430, 100));
+            block.setMaximumSize(new Dimension(470, 104));
             return block;
         }
 
@@ -3145,20 +3411,20 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             block.setLayout(new BoxLayout(block, BoxLayout.Y_AXIS));
 
             final BubblePanel card = new BubblePanel(outgoing ? OUTGOING_BUBBLE : INCOMING_BUBBLE,
-                    outgoing ? new Color(147, 197, 253) : BORDER,
-                    16);
+                    outgoing ? new Color(147, 197, 253) : BORDER_LIGHT,
+                    RADIUS_LG);
             card.setLayout(new BorderLayout());
-            card.setBorder(new EmptyBorder(8, 8, 8, 8));
+            card.setBorder(pad(SPACE_SM));
 
             JLabel imageLabel = new JLabel(imageIcon);
-            imageLabel.setBorder(new RoundedBorder(outgoing ? new Color(147, 197, 253) : BORDER, 12));
+            imageLabel.setBorder(new RoundedBorder(outgoing ? new Color(147, 197, 253) : BORDER, RADIUS_MD));
             card.add(imageLabel, BorderLayout.CENTER);
 
             JLabel meta = new JLabel(displayFileSize(message.fileSize)
                     + (outgoing ? " · 已发送" : " · 点击下载"));
-            meta.setFont(new Font("Microsoft YaHei UI", Font.PLAIN, 12));
+            meta.setFont(UI_FONT_SMALL);
             meta.setForeground(outgoing ? PRIMARY_DARK : MUTED);
-            meta.setBorder(new EmptyBorder(6, 2, 0, 2));
+            meta.setBorder(pad(6, 2, 0, 2));
             card.add(meta, BorderLayout.SOUTH);
 
             Dimension preferred = new Dimension(
@@ -3179,7 +3445,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
             card.setAlignmentX(outgoing ? Component.RIGHT_ALIGNMENT : Component.LEFT_ALIGNMENT);
             block.add(name);
-            block.add(Box.createVerticalStrut(3));
+            block.add(Box.createVerticalStrut(SPACE_XS));
             block.add(card);
             block.setMaximumSize(new Dimension(430, preferred.height + 24));
             return block;
@@ -3290,8 +3556,20 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
         public void clear() {
             removeAll();
+            showEmptyState();
             revalidate();
             repaint();
+        }
+
+        private void showEmptyState() {
+            removeAll();
+            JPanel state = createEmptyState("选择一个会话开始聊天", "消息、文件和群聊记录会显示在这里");
+            state.setAlignmentX(Component.LEFT_ALIGNMENT);
+            state.setMaximumSize(new Dimension(Integer.MAX_VALUE, 260));
+            add(Box.createVerticalGlue());
+            add(state);
+            add(Box.createVerticalGlue());
+            showingEmptyState = true;
         }
     }
 
