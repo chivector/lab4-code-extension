@@ -31,6 +31,11 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private static final String MOMENT_SYNC_REQUEST_PREFIX = "__MOMENT_REQ__|";
     private static final String MOMENT_SYNC_ITEM_PREFIX = "__MOMENT_ITEM__|";
     private static final String MOMENT_DELETE_PREFIX = "__MOMENT_DELETE__|";
+    private static final String VIDEO_CALL_PREFIX = "__VIDEO_CALL__|";
+    private static final String VIDEO_INVITE = "INVITE";
+    private static final String VIDEO_ACCEPT = "ACCEPT";
+    private static final String VIDEO_REJECT = "REJECT";
+    private static final String VIDEO_HANGUP = "HANGUP";
 
     private static final long MAX_FILE_BYTES = 5L * 1024L * 1024L;
     private static final String ACCOUNT_FILE = "accounts.properties";
@@ -109,7 +114,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     JTextArea msgWindow;
     JButton buttonConnect, buttonSend, buttonRefresh, buttonAddFriend;
     JButton buttonFile, buttonImage, buttonVoice, buttonRecord, buttonEmoji, buttonLog;
-    JButton buttonHeaderMore;
+    JButton buttonHeaderMore, buttonVideo;
     JButton buttonCreateGroup;
     JButton buttonProfile, buttonMoments;
     JLabel statusLabel, conversationTitleLabel, conversationSubtitleLabel;
@@ -140,6 +145,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private Set<String> sentFriendRequests = new HashSet<String>();
     private Set<String> incomingFriendRequests = new HashSet<String>();
     private Set<String> visibleUsers = new HashSet<String>();
+    private Map<String, VideoCallWindow> videoCallWindows = new HashMap<String, VideoCallWindow>();
+    private Set<String> pendingVideoCalls = new HashSet<String>();
     private long conversationSequence = 0;
     private MomentsDialog activeMomentsDialog;
     private Path logFile;
@@ -503,13 +510,19 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         textBlock.add(conversationSubtitleLabel);
         identity.add(textBlock);
         header.add(identity, BorderLayout.WEST);
+        buttonVideo = createButton("视频", false);
+        buttonVideo.setFont(UI_FONT_BOLD);
+        buttonVideo.setPreferredSize(new Dimension(58, BUTTON_HEIGHT));
+        buttonVideo.setToolTipText("选择在线好友后发起视频通话");
+        buttonVideo.addActionListener(this);
         buttonHeaderMore = createButton("⋯", false);
         buttonHeaderMore.setFont(new Font("Dialog", Font.BOLD, 18));
         buttonHeaderMore.setPreferredSize(new Dimension(40, BUTTON_HEIGHT));
         buttonHeaderMore.setToolTipText("更多聊天操作");
         buttonHeaderMore.addActionListener(this);
-        JPanel headerActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        JPanel headerActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, SPACE_SM, 0));
         headerActions.setOpaque(false);
+        headerActions.add(buttonVideo);
         headerActions.add(buttonHeaderMore);
         header.add(headerActions, BorderLayout.EAST);
 
@@ -781,6 +794,12 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         if(buttonHeaderMore == null) return;
         JPopupMenu menu = new JPopupMenu();
         menu.setBorder(new CompoundBorder(new RoundedBorder(BORDER, RADIUS_MD), pad(SPACE_XS)));
+        menu.add(createConversationMenuItem("发起视频通话", new Runnable() {
+            public void run() {
+                startVideoCall();
+            }
+        }));
+        menu.addSeparator();
         menu.add(createConversationMenuItem("刷新在线列表", new Runnable() {
             public void run() {
                 refreshUsers();
@@ -1117,9 +1136,25 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     }
 
     private boolean handleProtocolMessage(String sender, String body, String time) {
+        if(handleVideoCallProtocolMessage(sender, body)) return true;
         if(handleMomentProtocolMessage(sender, body)) return true;
         if(handleGroupProtocolMessage(sender, body, time)) return true;
         return handleFriendProtocolMessage(sender, body);
+    }
+
+    private boolean handleVideoCallProtocolMessage(String sender, String body) {
+        if(!body.startsWith(VIDEO_CALL_PREFIX)) return false;
+        String action = body.substring(VIDEO_CALL_PREFIX.length()).trim();
+        if(VIDEO_INVITE.equals(action)) {
+            handleIncomingVideoInvite(sender);
+        } else if(VIDEO_ACCEPT.equals(action)) {
+            handleVideoAccepted(sender);
+        } else if(VIDEO_REJECT.equals(action)) {
+            handleVideoRejected(sender);
+        } else if(VIDEO_HANGUP.equals(action)) {
+            handleVideoHangup(sender);
+        }
+        return true;
     }
 
     private boolean handleMomentProtocolMessage(String sender, String body) {
@@ -1351,9 +1386,21 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             if(buttonFile != null) buttonFile.setEnabled(true);
         }
         markConversationRead(selected);
+        updateVideoButtonState();
         updateAttachmentPreview();
         updateSendButtonState();
         if(msgWindow != null) msgWindow.requestFocusInWindow();
+    }
+
+    private void updateVideoButtonState() {
+        if(buttonVideo == null) return;
+        boolean canCall = ck != null && ck.isConnected()
+                && selectedChatTarget != null
+                && visibleUsers.contains(selectedChatTarget);
+        buttonVideo.setEnabled(canCall);
+        buttonVideo.setToolTipText(canCall
+                ? "和 " + selectedChatTarget + " 视频通话"
+                : "请选择在线好友后发起视频通话");
     }
 
     private String getSelectedPrivateTarget() {
@@ -1568,6 +1615,118 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             addMsg("<font color=\"#cc6600\">好友在线：" + escapeHtml(nick) + "</font>");
         }
         if(onlineList != null) onlineList.repaint();
+    }
+
+    private void startVideoCall() {
+        String target = requireOnlinePrivateTarget("视频通话");
+        if(target == null) return;
+        VideoCallWindow existing = videoWindowFor(target);
+        if(existing != null && existing.isDisplayable()) {
+            existing.toFront();
+            existing.requestFocus();
+            return;
+        }
+        pendingVideoCalls.add(target);
+        sendVideoSignal(target, VIDEO_INVITE);
+        VideoCallWindow window = openVideoCallWindow(target, true);
+        window.showWaiting("正在等待 " + target + " 接听");
+        showVideoSystemMessage("已向 " + target + " 发起视频通话。");
+    }
+
+    private void handleIncomingVideoInvite(String sender) {
+        if(sender == null || sender.length() == 0 || sender.equalsIgnoreCase(ownNick())) return;
+        VideoCallWindow existing = videoWindowFor(sender);
+        if(existing != null && existing.isDisplayable()) {
+            sendVideoSignal(sender, VIDEO_REJECT);
+            showVideoSystemMessage(sender + " 发来视频通话邀请，已因当前通话占用而拒绝。");
+            return;
+        }
+        int choice = JOptionPane.showConfirmDialog(this,
+                sender + " 邀请你视频通话，是否接听？",
+                "视频通话",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.QUESTION_MESSAGE);
+        if(choice == JOptionPane.YES_OPTION) {
+            sendVideoSignal(sender, VIDEO_ACCEPT);
+            VideoCallWindow window = openVideoCallWindow(sender, false);
+            window.showConnected();
+            showVideoSystemMessage("已接听 " + sender + " 的视频通话。");
+        } else {
+            sendVideoSignal(sender, VIDEO_REJECT);
+            showVideoSystemMessage("已拒绝 " + sender + " 的视频通话邀请。");
+        }
+    }
+
+    private void handleVideoAccepted(String sender) {
+        pendingVideoCalls.remove(sender);
+        VideoCallWindow window = openVideoCallWindow(sender, true);
+        window.showConnected();
+        showVideoSystemMessage(sender + " 已接听视频通话。");
+    }
+
+    private void handleVideoRejected(String sender) {
+        pendingVideoCalls.remove(sender);
+        VideoCallWindow window = videoWindowFor(sender);
+        if(window != null) window.finishFromRemote("对方已拒绝通话");
+        showVideoSystemMessage(sender + " 已拒绝视频通话。");
+    }
+
+    private void handleVideoHangup(String sender) {
+        pendingVideoCalls.remove(sender);
+        VideoCallWindow window = videoWindowFor(sender);
+        if(window != null) window.finishFromRemote("对方已挂断");
+        showVideoSystemMessage(sender + " 已结束视频通话。");
+    }
+
+    private void sendVideoSignal(String target, String action) {
+        if(ck != null && ck.isConnected() && target != null && target.length() > 0) {
+            ck.sendMessage("/msg " + target + " " + VIDEO_CALL_PREFIX + action);
+        }
+    }
+
+    private VideoCallWindow openVideoCallWindow(String peer, boolean outgoing) {
+        VideoCallWindow existing = videoWindowFor(peer);
+        if(existing != null && existing.isDisplayable()) return existing;
+        VideoCallWindow window = new VideoCallWindow(this, peer, outgoing);
+        videoCallWindows.put(peer, window);
+        window.setLocationRelativeTo(this);
+        window.setVisible(true);
+        return window;
+    }
+
+    private VideoCallWindow videoWindowFor(String peer) {
+        if(peer == null) return null;
+        VideoCallWindow direct = videoCallWindows.get(peer);
+        if(direct != null) return direct;
+        Iterator<Map.Entry<String, VideoCallWindow>> it = videoCallWindows.entrySet().iterator();
+        while(it.hasNext()) {
+            Map.Entry<String, VideoCallWindow> entry = it.next();
+            if(peer.equalsIgnoreCase(entry.getKey())) return entry.getValue();
+        }
+        return null;
+    }
+
+    private void removeVideoWindow(String peer, VideoCallWindow window) {
+        Iterator<Map.Entry<String, VideoCallWindow>> windowIt = videoCallWindows.entrySet().iterator();
+        while(windowIt.hasNext()) {
+            Map.Entry<String, VideoCallWindow> entry = windowIt.next();
+            if(entry.getValue() == window || peer.equalsIgnoreCase(entry.getKey())) {
+                windowIt.remove();
+                break;
+            }
+        }
+        Iterator<String> pendingIt = pendingVideoCalls.iterator();
+        while(pendingIt.hasNext()) {
+            String pending = pendingIt.next();
+            if(peer.equalsIgnoreCase(pending)) {
+                pendingIt.remove();
+                break;
+            }
+        }
+    }
+
+    private void showVideoSystemMessage(String text) {
+        addMsg("<font color=\"#3366cc\">" + escapeHtml(text) + "</font>");
     }
 
     private void loadUserData() {
@@ -2539,6 +2698,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
         visibleUsers = nextUsers;
         rebuildConversationList(previousSelection);
+        updateVideoButtonState();
     }
 
     public void receiveFile(String sender, String filename, String base64) {
@@ -2613,6 +2773,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         if(e.getSource()==buttonVoice) chooseAndSendVoice();
         if(e.getSource()==buttonRecord) recordAndSendVoice();
         if(e.getSource()==buttonFile) chooseAndSendFile();
+        if(e.getSource()==buttonVideo) startVideoCall();
         if(e.getSource()==buttonProfile) showProfileDialog();
         if(e.getSource()==buttonMoments) showMomentsDialog();
         if(e.getSource()==buttonLog) showLogPath();
@@ -3677,6 +3838,367 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         private void showError(String text) {
             statusLabel.setForeground(DANGER);
             statusLabel.setText(text);
+        }
+    }
+
+    class VideoCallWindow extends JDialog {
+        private String peer;
+        private boolean outgoing;
+        private boolean connected = false;
+        private boolean finished = false;
+        private boolean cameraOn = true;
+        private boolean micOn = true;
+        private long connectedAt = 0L;
+        private JLabel statusLabel;
+        private JLabel timerLabel;
+        private VideoSurface remoteSurface;
+        private VideoSurface localSurface;
+        private JButton cameraButton;
+        private JButton micButton;
+        private JButton hangupButton;
+        private javax.swing.Timer frameTimer;
+        private javax.swing.Timer callTimer;
+
+        VideoCallWindow(Frame owner, String peer, boolean outgoing) {
+            super(owner, "视频通话 - " + peer, false);
+            this.peer = peer;
+            this.outgoing = outgoing;
+            setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
+            setMinimumSize(new Dimension(520, 620));
+            setSize(520, 620);
+            setContentPane(createVideoContent());
+            addWindowListener(new WindowAdapter() {
+                public void windowClosing(WindowEvent e) {
+                    hangupLocal();
+                }
+            });
+            startFrameTimer();
+        }
+
+        private JPanel createVideoContent() {
+            JPanel root = new JPanel(new BorderLayout());
+            root.setBackground(new Color(20, 20, 20));
+
+            JPanel header = new JPanel(new BorderLayout());
+            header.setOpaque(false);
+            header.setBorder(pad(SPACE_MD, SPACE_LG, SPACE_SM, SPACE_LG));
+            JLabel title = new JLabel(peer);
+            title.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 20));
+            title.setForeground(Color.WHITE);
+            statusLabel = new JLabel(outgoing ? "正在呼叫..." : "正在接入...");
+            statusLabel.setFont(UI_FONT_SMALL);
+            statusLabel.setForeground(new Color(210, 210, 210));
+            JPanel titleBlock = new JPanel();
+            titleBlock.setOpaque(false);
+            titleBlock.setLayout(new BoxLayout(titleBlock, BoxLayout.Y_AXIS));
+            titleBlock.add(title);
+            titleBlock.add(Box.createVerticalStrut(SPACE_XS));
+            titleBlock.add(statusLabel);
+            timerLabel = new JLabel("00:00");
+            timerLabel.setFont(new Font("Dialog", Font.BOLD, 18));
+            timerLabel.setForeground(new Color(210, 210, 210));
+            header.add(titleBlock, BorderLayout.WEST);
+            header.add(timerLabel, BorderLayout.EAST);
+
+            JLayeredPane stage = new JLayeredPane() {
+                public void doLayout() {
+                    if(remoteSurface != null) remoteSurface.setBounds(0, 0, getWidth(), getHeight());
+                    if(localSurface != null) {
+                        int width = Math.min(168, Math.max(126, getWidth() / 3));
+                        int height = Math.max(96, width * 3 / 4);
+                        localSurface.setBounds(getWidth() - width - 16, 16, width, height);
+                    }
+                }
+            };
+            stage.setBackground(new Color(26, 26, 26));
+            stage.setOpaque(true);
+            remoteSurface = new VideoSurface(peer, false);
+            localSurface = new VideoSurface(ownNick(), true);
+            localSurface.setBorder(new RoundedBorder(new Color(255, 255, 255, 120), RADIUS_LG));
+            stage.add(remoteSurface, Integer.valueOf(0));
+            stage.add(localSurface, Integer.valueOf(1));
+
+            JPanel controls = new JPanel(new FlowLayout(FlowLayout.CENTER, SPACE_MD, SPACE_MD));
+            controls.setBackground(new Color(20, 20, 20));
+            cameraButton = createCallButton("关摄像头", new Color(62, 62, 62));
+            micButton = createCallButton("静音", new Color(62, 62, 62));
+            hangupButton = createCallButton("挂断", new Color(224, 68, 68));
+            cameraButton.addActionListener(new ActionListener() {
+                public void actionPerformed(ActionEvent e) {
+                    toggleCamera();
+                }
+            });
+            micButton.addActionListener(new ActionListener() {
+                public void actionPerformed(ActionEvent e) {
+                    toggleMic();
+                }
+            });
+            hangupButton.addActionListener(new ActionListener() {
+                public void actionPerformed(ActionEvent e) {
+                    hangupLocal();
+                }
+            });
+            controls.add(cameraButton);
+            controls.add(micButton);
+            controls.add(hangupButton);
+
+            root.add(header, BorderLayout.NORTH);
+            root.add(stage, BorderLayout.CENTER);
+            root.add(controls, BorderLayout.SOUTH);
+            return root;
+        }
+
+        private JButton createCallButton(final String text, final Color fill) {
+            JButton button = new JButton(text) {
+                protected void paintComponent(Graphics g) {
+                    Graphics2D g2 = (Graphics2D)g.create();
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                    g2.setColor(isEnabled() ? fill : new Color(80, 80, 80));
+                    g2.fillRoundRect(0, 0, getWidth(), getHeight(), RADIUS_XL, RADIUS_XL);
+                    g2.dispose();
+                    super.paintComponent(g);
+                }
+            };
+            button.setFont(UI_FONT_BOLD);
+            button.setForeground(Color.WHITE);
+            button.setFocusPainted(false);
+            button.setOpaque(false);
+            button.setContentAreaFilled(false);
+            button.setBorder(pad(9, 18, 9, 18));
+            button.setPreferredSize(new Dimension(104, 42));
+            button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            return button;
+        }
+
+        void showWaiting(String text) {
+            connected = false;
+            if(statusLabel != null) statusLabel.setText(text);
+            if(remoteSurface != null) remoteSurface.setWaiting(true);
+        }
+
+        void showConnected() {
+            if(finished) return;
+            connected = true;
+            connectedAt = System.currentTimeMillis();
+            if(statusLabel != null) statusLabel.setText("正在通话");
+            if(remoteSurface != null) remoteSurface.setWaiting(false);
+            startCallTimer();
+        }
+
+        void finishFromRemote(String text) {
+            if(finished) return;
+            finished = true;
+            connected = false;
+            if(statusLabel != null) statusLabel.setText(text);
+            disableControls();
+            stopCallTimer();
+            javax.swing.Timer timer = new javax.swing.Timer(1200, new ActionListener() {
+                public void actionPerformed(ActionEvent e) {
+                    disposeWindow();
+                }
+            });
+            timer.setRepeats(false);
+            timer.start();
+        }
+
+        private void hangupLocal() {
+            if(finished) return;
+            finished = true;
+            sendVideoSignal(peer, VIDEO_HANGUP);
+            showVideoSystemMessage("已结束与 " + peer + " 的视频通话。");
+            disposeWindow();
+        }
+
+        private void toggleCamera() {
+            cameraOn = !cameraOn;
+            localSurface.setCameraOn(cameraOn);
+            cameraButton.setText(cameraOn ? "关摄像头" : "开摄像头");
+            if(statusLabel != null && connected) statusLabel.setText(cameraOn ? "正在通话" : "摄像头已关闭");
+        }
+
+        private void toggleMic() {
+            micOn = !micOn;
+            micButton.setText(micOn ? "静音" : "取消静音");
+            if(statusLabel != null && connected) statusLabel.setText(micOn ? "正在通话" : "麦克风已静音");
+        }
+
+        private void startFrameTimer() {
+            frameTimer = new javax.swing.Timer(80, new ActionListener() {
+                public void actionPerformed(ActionEvent e) {
+                    remoteSurface.tick();
+                    localSurface.tick();
+                }
+            });
+            frameTimer.start();
+        }
+
+        private void startCallTimer() {
+            stopCallTimer();
+            callTimer = new javax.swing.Timer(1000, new ActionListener() {
+                public void actionPerformed(ActionEvent e) {
+                    updateCallTime();
+                }
+            });
+            callTimer.start();
+            updateCallTime();
+        }
+
+        private void updateCallTime() {
+            if(timerLabel == null || connectedAt <= 0) return;
+            long seconds = Math.max(0, (System.currentTimeMillis() - connectedAt) / 1000);
+            timerLabel.setText(String.format("%02d:%02d", seconds / 60, seconds % 60));
+        }
+
+        private void stopCallTimer() {
+            if(callTimer != null) {
+                callTimer.stop();
+                callTimer = null;
+            }
+        }
+
+        private void disableControls() {
+            if(cameraButton != null) cameraButton.setEnabled(false);
+            if(micButton != null) micButton.setEnabled(false);
+            if(hangupButton != null) hangupButton.setEnabled(false);
+        }
+
+        private void disposeWindow() {
+            if(frameTimer != null) frameTimer.stop();
+            stopCallTimer();
+            removeVideoWindow(peer, this);
+            dispose();
+        }
+    }
+
+    class VideoSurface extends JPanel {
+        private String name;
+        private boolean local;
+        private boolean cameraOn = true;
+        private boolean waiting = false;
+        private int frame = 0;
+
+        VideoSurface(String name, boolean local) {
+            this.name = name == null ? "" : name;
+            this.local = local;
+            setOpaque(true);
+            setBackground(Color.BLACK);
+        }
+
+        void setCameraOn(boolean cameraOn) {
+            this.cameraOn = cameraOn;
+            repaint();
+        }
+
+        void setWaiting(boolean waiting) {
+            this.waiting = waiting;
+            repaint();
+        }
+
+        void tick() {
+            frame++;
+            repaint();
+        }
+
+        protected void paintComponent(Graphics g) {
+            super.paintComponent(g);
+            Graphics2D g2 = (Graphics2D)g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            if(cameraOn) paintVideo(g2);
+            else paintCameraOff(g2);
+            paintOverlay(g2);
+            g2.dispose();
+        }
+
+        private void paintVideo(Graphics2D g2) {
+            Color base = videoColor(name);
+            Color dark = base.darker().darker();
+            g2.setPaint(new GradientPaint(0, 0, dark, getWidth(), getHeight(), base));
+            g2.fillRect(0, 0, getWidth(), getHeight());
+
+            for(int i=0;i<8;i++) {
+                int alpha = local ? 38 : 54;
+                g2.setColor(new Color(255, 255, 255, alpha));
+                int size = local ? 34 + i * 12 : 70 + i * 28;
+                int x = (int)((Math.sin((frame + i * 13) * 0.06) + 1) * (getWidth() - size) / 2.0);
+                int y = (int)((Math.cos((frame + i * 17) * 0.045) + 1) * (getHeight() - size) / 2.0);
+                g2.fillOval(x, y, size, size);
+            }
+
+            int faceSize = Math.min(getWidth(), getHeight()) / (local ? 4 : 5);
+            faceSize = Math.max(local ? 28 : 64, faceSize);
+            int faceX = (getWidth() - faceSize) / 2;
+            int faceY = (getHeight() - faceSize) / 2 - (local ? 2 : 12);
+            g2.setColor(new Color(255, 255, 255, 210));
+            g2.fillRoundRect(faceX, faceY, faceSize, faceSize, RADIUS_XL, RADIUS_XL);
+            g2.setColor(base.darker());
+            g2.setFont(new Font("Microsoft YaHei UI", Font.BOLD, Math.max(18, faceSize / 3)));
+            String avatar = avatarText(name);
+            FontMetrics fm = g2.getFontMetrics();
+            g2.drawString(avatar, faceX + (faceSize - fm.stringWidth(avatar)) / 2,
+                    faceY + (faceSize + fm.getAscent() - fm.getDescent()) / 2);
+
+            if(waiting) {
+                g2.setColor(new Color(0, 0, 0, 90));
+                g2.fillRect(0, 0, getWidth(), getHeight());
+                g2.setColor(Color.WHITE);
+                g2.setFont(new Font("Microsoft YaHei UI", Font.BOLD, local ? 12 : 18));
+                String text = "等待接听...";
+                FontMetrics textMetrics = g2.getFontMetrics();
+                g2.drawString(text, (getWidth() - textMetrics.stringWidth(text)) / 2,
+                        getHeight() / 2 + faceSize / 2 + 36);
+            }
+        }
+
+        private void paintCameraOff(Graphics2D g2) {
+            g2.setColor(new Color(31, 31, 31));
+            g2.fillRect(0, 0, getWidth(), getHeight());
+            int size = Math.min(getWidth(), getHeight()) / (local ? 3 : 4);
+            size = Math.max(local ? 36 : 86, size);
+            int x = (getWidth() - size) / 2;
+            int y = (getHeight() - size) / 2 - 12;
+            g2.setColor(new Color(72, 72, 72));
+            g2.fillRoundRect(x, y, size, size, RADIUS_XL, RADIUS_XL);
+            g2.setColor(Color.WHITE);
+            g2.setFont(new Font("Microsoft YaHei UI", Font.BOLD, Math.max(18, size / 3)));
+            String avatar = avatarText(name);
+            FontMetrics fm = g2.getFontMetrics();
+            g2.drawString(avatar, x + (size - fm.stringWidth(avatar)) / 2,
+                    y + (size + fm.getAscent() - fm.getDescent()) / 2);
+            g2.setFont(UI_FONT_SMALL);
+            String text = local ? "摄像头已关" : "对方摄像头暂不可用";
+            FontMetrics textMetrics = g2.getFontMetrics();
+            g2.drawString(text, (getWidth() - textMetrics.stringWidth(text)) / 2,
+                    y + size + 28);
+        }
+
+        private void paintOverlay(Graphics2D g2) {
+            g2.setColor(new Color(0, 0, 0, local ? 95 : 75));
+            int labelWidth = Math.min(getWidth() - 20, Math.max(72, g2.getFontMetrics(UI_FONT_SMALL).stringWidth(name) + 24));
+            g2.fillRoundRect(10, getHeight() - 34, labelWidth, 24, RADIUS_LG, RADIUS_LG);
+            g2.setColor(Color.WHITE);
+            g2.setFont(UI_FONT_SMALL);
+            g2.drawString(name, 22, getHeight() - 17);
+
+            if(!local && cameraOn && !waiting) {
+                int barsX = getWidth() - 48;
+                int barsY = getHeight() - 28;
+                for(int i=0;i<4;i++) {
+                    int barHeight = 5 + (int)((Math.sin((frame + i * 7) * 0.18) + 1) * 7);
+                    g2.fillRoundRect(barsX + i * 8, barsY - barHeight, 5, barHeight, 4, 4);
+                }
+            }
+        }
+
+        private Color videoColor(String source) {
+            int hash = source == null ? 0 : source.hashCode();
+            Color base = AVATAR_COLORS[(hash & 0x7fffffff) % AVATAR_COLORS.length];
+            return local ? base.brighter() : base;
+        }
+
+        private String avatarText(String source) {
+            String trimmed = source == null ? "" : source.trim();
+            if(trimmed.length() == 0) return "?";
+            return trimmed.substring(0, 1).toUpperCase();
         }
     }
 
