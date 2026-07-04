@@ -19,6 +19,7 @@ public class ClientKernel {
     private boolean dropMe = false;
     private IOException lastError;
     private LinkedList clients;
+    private LinkedList messageListeners;
     private LinkedList pendingMessages;
     public String nick;
     public boolean printMsg = true;
@@ -30,6 +31,7 @@ public class ClientKernel {
         nick = "" + port;
         serverAd = server;
         clients = new LinkedList();
+        messageListeners = new LinkedList();
         pendingMessages = new LinkedList();
         connect();
         if(isConnected) {
@@ -98,6 +100,16 @@ public class ClientKernel {
     public void removeClient(ChatClient c) {
         clients.remove(c);
     }
+    public synchronized void addMessageListener(MessageListener listener) {
+        if(listener == null) return;
+        messageListeners.add(listener);
+        while(pendingMessages.size() > 0) {
+            listener.onKernelMessage((String)pendingMessages.removeFirst());
+        }
+    }
+    public synchronized void removeMessageListener(MessageListener listener) {
+        messageListeners.remove(listener);
+    }
     public void pause(int time) {
         try {
             Thread.sleep(time);
@@ -105,9 +117,13 @@ public class ClientKernel {
     }
     public synchronized void storeMsg(String str) {
         Object[] client = clients.toArray();
-        if(client.length == 0) {
+        Object[] listener = messageListeners.toArray();
+        if(client.length == 0 && listener.length == 0) {
             pendingMessages.addLast(str);
             return;
+        }
+        for(int i=0;i<listener.length;i++) {
+            ((MessageListener)listener[i]).onKernelMessage(str);
         }
         for(int i=0;i<client.length;i++) {
             ChatClient chatClient = (ChatClient)(client[i]);
@@ -146,6 +162,10 @@ public class ClientKernel {
     }
     public static void main(String args[]) {
         new ClientKernel("localhost", 1984);
+    }
+
+    public static interface MessageListener {
+        void onKernelMessage(String str);
     }
 }
 class ClientMsgSender extends Thread {

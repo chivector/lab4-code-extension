@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CNCD Web Chat</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="rail">
+      <div class="rail-profile" id="railAvatar">我</div>
+      <button class="rail-button active" title="聊天" data-rail="chat"><span class="ui-icon icon-chat"></span></button>
+      <button class="rail-button" title="通讯录" data-rail="contacts"><span class="ui-icon icon-contacts"></span></button>
+      <button class="rail-button" title="收藏" data-rail="files"><span class="ui-icon icon-cube"></span></button>
+      <div class="rail-spacer"></div>
+      <button class="rail-button" id="refreshButton" title="刷新在线列表"><span class="ui-icon icon-refresh"></span></button>
+      <button class="rail-button" id="disconnectButton" title="断开连接"><span class="ui-icon icon-power"></span></button>
+    </aside>
+
+    <section class="conversation-pane">
+      <div class="search-row">
+        <div class="search-box">
+          <span>⌕</span>
+          <input id="searchInput" placeholder="搜索">
+        </div>
+        <button class="circle-button" id="newChatButton" title="发起会话">＋</button>
+      </div>
+      <div class="connection-card" id="connectionCard">
+        <div class="connection-head">
+          <div>
+            <div class="connection-title">连接服务器</div>
+            <div class="connection-summary" id="connectionSummary">尚未连接</div>
+          </div>
+          <span class="connection-dot" id="connectionDot"></span>
+        </div>
+        <label>
+          <span>服务器</span>
+          <input id="hostInput" value="127.0.0.1">
+        </label>
+        <label>
+          <span>端口</span>
+          <input id="portInput" value="3500">
+        </label>
+        <label>
+          <span>昵称</span>
+          <input id="nickInput" value="WebUser">
+        </label>
+        <button id="connectButton">连接</button>
+      </div>
+      <div class="conversation-list" id="conversationList"></div>
+    </section>
+
+    <main class="chat-pane">
+      <header class="chat-header">
+        <div class="chat-titlebar">
+          <div class="header-avatar" id="chatAvatar">广</div>
+          <div>
+            <h1 id="chatTitle">广播</h1>
+            <p id="chatSubtitle">连接后开始聊天</p>
+          </div>
+        </div>
+        <div class="header-actions">
+          <button class="icon-button" id="imageHeaderButton" title="发送图片"><span class="ui-icon icon-image"></span></button>
+          <button class="icon-button" id="fileHeaderButton" title="发送文件"><span class="ui-icon icon-file"></span></button>
+          <button class="icon-button" title="更多"><span class="ui-icon icon-more"></span></button>
+        </div>
+      </header>
+
+      <section class="message-area" id="messageArea"></section>
+      <div class="drop-overlay" id="dropOverlay">
+        <div class="drop-card">
+          <span class="ui-icon icon-file"></span>
+          <strong>松开发送文件</strong>
+          <span>图片会直接预览，语音会以播放器展示</span>
+        </div>
+      </div>
+
+      <footer class="composer">
+        <div class="tool-row">
+          <button class="tool-button" id="emojiButton" title="表情"><span class="ui-icon icon-smile"></span></button>
+          <button class="tool-button" id="imageButton" title="发送图片"><span class="ui-icon icon-image"></span></button>
+          <button class="tool-button" id="fileButton" title="发送文件"><span class="ui-icon icon-file"></span></button>
+          <button class="tool-button" id="voiceButton" title="录音发送"><span class="ui-icon icon-mic"></span></button>
+          <button class="tool-button" id="clearButton" title="清空输入"><span class="ui-icon icon-clear"></span></button>
+          <span class="status-pill" id="statusPill">未连接</span>
+        </div>
+        <div class="emoji-panel hidden" id="emojiPanel"></div>
+        <textarea id="messageInput" maxlength="500" placeholder="输入消息，Enter 发送，Shift + Enter 换行"></textarea>
+        <div class="send-row">
+          <span id="hintText">文件和语音需要选择在线私聊对象</span>
+          <span class="char-count" id="charCount">0/500</span>
+          <button id="sendButton" disabled>发送</button>
+        </div>
+      </footer>
+    </main>
+  </div>
+
+  <input type="file" id="imageInput" accept="image/*" hidden>
+  <input type="file" id="fileInput" hidden>
+  <div class="toast-stack" id="toastStack"></div>
+
+  <div class="record-popover hidden" id="recordPopover">
+    <div class="record-card">
+      <div class="record-ring"><span id="recordSeconds">0s</span></div>
+      <h2>正在录音</h2>
+      <p>再次点击停止并发送，或取消本次录音。</p>
+      <div class="record-actions">
+        <button id="cancelRecordButton">取消</button>
+        <button id="stopRecordButton">停止并发送</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>

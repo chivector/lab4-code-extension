@@ -900,6 +900,21 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     }
 
     public static void main(String args[]) {
+        if(args.length > 0 && "--web".equalsIgnoreCase(args[0])) {
+            try {
+                String[] webArgs = new String[Math.max(0, args.length - 1)];
+                System.arraycopy(args, 1, webArgs, 0, webArgs.length);
+                com.cncd.ch04.web.WebChatLauncher.main(webArgs);
+                return;
+            } catch(Exception e) {
+                System.out.println("Unable to start Web client, falling back to Swing: " + e.getMessage());
+            }
+        }
+        if(args.length > 0 && "--swing".equalsIgnoreCase(args[0])) {
+            String[] swingArgs = new String[Math.max(0, args.length - 1)];
+            System.arraycopy(args, 1, swingArgs, 0, swingArgs.length);
+            args = swingArgs;
+        }
         ChatClient client = new ChatClient();
         client.setTitle(client.appName);
         client.setSize(1100, 720);
