@@ -48,21 +48,22 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private static final int MOMENT_TEXT_LIMIT = 300;
     private static final String BROADCAST_CHAT = "广播";
     private static final String GROUP_LABEL_PREFIX = "群聊 · ";
-    private static final Color APP_BACKGROUND = new Color(237, 237, 237);
-    private static final Color SIDEBAR_BACKGROUND = new Color(247, 247, 247);
+    private static final Color APP_BACKGROUND = new Color(226, 229, 236);
+    private static final Color RAIL_BACKGROUND = new Color(226, 229, 238);
+    private static final Color SIDEBAR_BACKGROUND = new Color(243, 244, 247);
     private static final Color PANEL_BACKGROUND = Color.WHITE;
     private static final Color SURFACE = Color.WHITE;
-    private static final Color SURFACE_SOFT = new Color(242, 242, 242);
-    private static final Color CHAT_BACKGROUND = new Color(245, 245, 245);
+    private static final Color SURFACE_SOFT = new Color(248, 249, 251);
+    private static final Color CHAT_BACKGROUND = new Color(246, 247, 249);
     private static final Color PRIMARY = new Color(7, 193, 96);
     private static final Color PRIMARY_DARK = new Color(5, 166, 83);
     private static final Color PRIMARY_SOFT = new Color(240, 251, 244);
-    private static final Color SIDEBAR_SELECTED = new Color(228, 228, 228);
-    private static final Color BORDER = new Color(218, 218, 218);
-    private static final Color BORDER_LIGHT = new Color(232, 232, 232);
-    private static final Color TEXT = new Color(25, 25, 25);
-    private static final Color MUTED = new Color(117, 117, 117);
-    private static final Color SOFT_MUTED = new Color(166, 166, 166);
+    private static final Color SIDEBAR_SELECTED = new Color(224, 228, 234);
+    private static final Color BORDER = new Color(216, 220, 228);
+    private static final Color BORDER_LIGHT = new Color(232, 235, 241);
+    private static final Color TEXT = new Color(31, 35, 42);
+    private static final Color MUTED = new Color(112, 118, 128);
+    private static final Color SOFT_MUTED = new Color(166, 172, 182);
     private static final Color SUCCESS = new Color(7, 193, 96);
     private static final Color WARNING = new Color(224, 150, 35);
     private static final Color DANGER = new Color(219, 68, 55);
@@ -77,7 +78,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private static final int SPACE_MD = 12;
     private static final int SPACE_LG = 16;
     private static final int SPACE_XL = 20;
-    private static final int SIDEBAR_WIDTH = 270;
+    private static final int RAIL_WIDTH = 56;
+    private static final int SIDEBAR_WIDTH = 300;
     private static final int BUTTON_HEIGHT = 34;
     private static final int INPUT_HEIGHT = 38;
     private static final Font UI_FONT = new Font("Microsoft YaHei UI", Font.PLAIN, 13);
@@ -300,10 +302,10 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         northPanel.setBackground(SURFACE);
         northPanel.setBorder(new CompoundBorder(
                 new MatteBorder(0, 0, 1, 0, BORDER),
-                pad(10, 18, 10, 18)));
+                pad(8, 18, 8, 18)));
 
         JLabel appTitle = new JLabel("CNCD Chat");
-        appTitle.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 18));
+        appTitle.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 16));
         appTitle.setForeground(TEXT);
         JLabel appSubTitle = new JLabel("桌面聊天实验");
         appSubTitle.setFont(UI_FONT_SMALL);
@@ -317,7 +319,11 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         JPanel brand = new JPanel();
         brand.setOpaque(false);
         brand.setLayout(new BoxLayout(brand, BoxLayout.X_AXIS));
-        brand.add(new AvatarView("C", false));
+        AvatarView brandAvatar = new AvatarView("C", true);
+        brandAvatar.setPreferredSize(new Dimension(30, 30));
+        brandAvatar.setMinimumSize(new Dimension(30, 30));
+        brandAvatar.setMaximumSize(new Dimension(30, 30));
+        brand.add(brandAvatar);
         brand.add(Box.createHorizontalStrut(SPACE_MD));
         brand.add(titleBlock);
 
@@ -351,9 +357,59 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private JPanel createMainPanel() {
         JPanel mainPanel = new JPanel(new BorderLayout());
         mainPanel.setBackground(APP_BACKGROUND);
+        JPanel leftShell = new JPanel(new BorderLayout());
+        leftShell.setBackground(SIDEBAR_BACKGROUND);
+        leftShell.add(createNavigationRail(), BorderLayout.WEST);
+        leftShell.add(createConversationPanel(), BorderLayout.CENTER);
         mainPanel.add(createChatPanel(), BorderLayout.CENTER);
-        mainPanel.add(createConversationPanel(), BorderLayout.WEST);
+        mainPanel.add(leftShell, BorderLayout.WEST);
         return mainPanel;
+    }
+
+    private JPanel createNavigationRail() {
+        JPanel rail = new JPanel();
+        rail.setPreferredSize(new Dimension(RAIL_WIDTH, 0));
+        rail.setBackground(RAIL_BACKGROUND);
+        rail.setBorder(new MatteBorder(0, 0, 0, 1, BORDER));
+        rail.setLayout(new BoxLayout(rail, BoxLayout.Y_AXIS));
+
+        AvatarView logo = new AvatarView("C", true);
+        logo.setAlignmentX(Component.CENTER_ALIGNMENT);
+        logo.setPreferredSize(new Dimension(36, 36));
+        logo.setMinimumSize(new Dimension(36, 36));
+        logo.setMaximumSize(new Dimension(36, 36));
+
+        rail.add(Box.createVerticalStrut(SPACE_LG));
+        rail.add(logo);
+        rail.add(Box.createVerticalStrut(SPACE_XL));
+
+        buttonRefresh = createRailButton("刷", "刷新在线列表");
+        buttonAddFriend = createRailButton("友", "添加选中好友");
+        buttonCreateGroup = createRailButton("群", "创建群聊");
+        buttonProfile = createRailButton("我", "个人资料");
+        buttonMoments = createRailButton("圈", "朋友圈");
+        buttonLog = createRailButton("记", "聊天记录");
+
+        buttonRefresh.addActionListener(this);
+        buttonAddFriend.addActionListener(this);
+        buttonCreateGroup.addActionListener(this);
+        buttonProfile.addActionListener(this);
+        buttonMoments.addActionListener(this);
+        buttonLog.addActionListener(this);
+
+        rail.add(buttonRefresh);
+        rail.add(Box.createVerticalStrut(SPACE_SM));
+        rail.add(buttonAddFriend);
+        rail.add(Box.createVerticalStrut(SPACE_SM));
+        rail.add(buttonCreateGroup);
+        rail.add(Box.createVerticalGlue());
+        rail.add(buttonProfile);
+        rail.add(Box.createVerticalStrut(SPACE_SM));
+        rail.add(buttonMoments);
+        rail.add(Box.createVerticalStrut(SPACE_SM));
+        rail.add(buttonLog);
+        rail.add(Box.createVerticalStrut(SPACE_LG));
+        return rail;
     }
 
     private JPanel createConversationPanel() {
@@ -374,7 +430,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         userModel.addElement(BROADCAST_CHAT);
         onlineList = new JList<String>(userModel);
         onlineList.setFont(UI_FONT_BOLD);
-        onlineList.setFixedCellHeight(74);
+        onlineList.setFixedCellHeight(78);
         onlineList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         onlineList.setSelectionBackground(SIDEBAR_SELECTED);
         onlineList.setSelectionForeground(TEXT);
@@ -403,39 +459,12 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         });
         onlineList.setSelectedIndex(0);
 
-        JScrollPane userScroll = new JScrollPane(onlineList);
-        userScroll.setBorder(null);
-        userScroll.getViewport().setBackground(SIDEBAR_BACKGROUND);
-        userScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        JScrollPane userScroll = createModernScrollPane(onlineList, SIDEBAR_BACKGROUND);
         conversationListPanel = new JPanel(new CardLayout());
         conversationListPanel.setOpaque(false);
         conversationListPanel.add(userScroll, "list");
         conversationListPanel.add(createEmptyConversationPanel(), "empty");
         eastPanel.add(conversationListPanel, BorderLayout.CENTER);
-
-        JPanel tools = new JPanel(new GridLayout(2, 3, SPACE_XS, SPACE_XS));
-        tools.setOpaque(false);
-        tools.setBorder(new CompoundBorder(new MatteBorder(1, 0, 0, 0, BORDER_LIGHT),
-                pad(SPACE_SM, 0, 0, 0)));
-        buttonRefresh = createToolButton("刷新");
-        buttonAddFriend = createToolButton("好友");
-        buttonCreateGroup = createToolButton("建群");
-        buttonProfile = createToolButton("资料");
-        buttonMoments = createToolButton("朋友圈");
-        buttonLog = createToolButton("记录");
-        buttonRefresh.addActionListener(this);
-        buttonAddFriend.addActionListener(this);
-        buttonCreateGroup.addActionListener(this);
-        buttonProfile.addActionListener(this);
-        buttonMoments.addActionListener(this);
-        buttonLog.addActionListener(this);
-        tools.add(buttonRefresh);
-        tools.add(buttonAddFriend);
-        tools.add(buttonCreateGroup);
-        tools.add(buttonProfile);
-        tools.add(buttonMoments);
-        tools.add(buttonLog);
-        eastPanel.add(tools, BorderLayout.SOUTH);
         return eastPanel;
     }
 
@@ -444,10 +473,10 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         panel.setOpaque(false);
         panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
 
-        JLabel title = createSectionTitle("聊天");
+        JLabel title = createSectionTitle("会话");
         title.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-        conversationSearchField = new PromptTextField("", 14, "搜索好友、群聊、广播");
+        conversationSearchField = new PromptTextField("", 14, "搜索");
         styleTextField(conversationSearchField);
         conversationSearchField.setMaximumSize(new Dimension(Integer.MAX_VALUE, INPUT_HEIGHT));
         conversationSearchField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
@@ -590,31 +619,31 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         buttonSend = createButton("发送", true);
         buttonSend.setPreferredSize(new Dimension(76, 36));
         buttonSend.setToolTipText("发送消息 Enter");
-        buttonEmoji = createButton("\uD83D\uDE0A", false);
-        buttonEmoji.setFont(new Font("Dialog", Font.PLAIN, 22));
+        buttonEmoji = createButton("笑", false);
+        buttonEmoji.setFont(UI_FONT_BOLD);
         buttonEmoji.setToolTipText("插入表情");
         buttonEmoji.setBorder(pad(4, 0, 4, 0));
-        buttonEmoji.setPreferredSize(new Dimension(42, 34));
+        buttonEmoji.setPreferredSize(new Dimension(40, 34));
         buttonImage = createButton("图", false);
         buttonImage.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 14));
         buttonImage.setToolTipText("发送图片");
         buttonImage.setBorder(pad(4, 0, 4, 0));
-        buttonImage.setPreferredSize(new Dimension(42, 34));
-        buttonVoice = createButton("语", false);
+        buttonImage.setPreferredSize(new Dimension(40, 34));
+        buttonVoice = createButton("音", false);
         buttonVoice.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 14));
         buttonVoice.setToolTipText("发送语音文件");
         buttonVoice.setBorder(pad(4, 0, 4, 0));
-        buttonVoice.setPreferredSize(new Dimension(42, 34));
+        buttonVoice.setPreferredSize(new Dimension(40, 34));
         buttonRecord = createButton("录", false);
         buttonRecord.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 14));
         buttonRecord.setToolTipText("录制一段语音并发送");
         buttonRecord.setBorder(pad(4, 0, 4, 0));
-        buttonRecord.setPreferredSize(new Dimension(42, 34));
-        buttonFile = createButton("+", false);
-        buttonFile.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 18));
+        buttonRecord.setPreferredSize(new Dimension(40, 34));
+        buttonFile = createButton("文", false);
+        buttonFile.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 14));
         buttonFile.setToolTipText("选择本地文件");
         buttonFile.setBorder(pad(4, 0, 4, 0));
-        buttonFile.setPreferredSize(new Dimension(42, 34));
+        buttonFile.setPreferredSize(new Dimension(40, 34));
         buttonSend.addActionListener(this);
         buttonEmoji.addActionListener(this);
         buttonImage.addActionListener(this);
@@ -629,7 +658,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
         JPanel toolbar = new JPanel(new BorderLayout());
         toolbar.setOpaque(false);
-        JPanel inputTools = new JPanel(new FlowLayout(FlowLayout.LEFT, SPACE_SM, 0));
+        JPanel inputTools = new JPanel(new FlowLayout(FlowLayout.LEFT, SPACE_XS, 0));
         inputTools.setOpaque(false);
         inputTools.add(buttonEmoji);
         inputTools.add(buttonImage);
@@ -641,10 +670,14 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         JScrollPane messageScroll = new JScrollPane(msgWindow);
         messageScroll.setBorder(new MatteBorder(1, 0, 0, 0, BORDER_LIGHT));
         messageScroll.getViewport().setBackground(Color.WHITE);
+        messageScroll.getVerticalScrollBar().setUI(new ModernScrollBarUI());
+        messageScroll.getVerticalScrollBar().setPreferredSize(new Dimension(8, 0));
         messageScroll.setPreferredSize(new Dimension(0, 96));
 
         JPanel actionRow = new JPanel(new BorderLayout());
         actionRow.setOpaque(false);
+        JLabel hint = createHintLabel("Enter 发送 · Shift+Enter 换行");
+        actionRow.add(hint, BorderLayout.WEST);
         actionRow.add(buttonSend, BorderLayout.EAST);
 
         composer.add(toolbar, BorderLayout.NORTH);
@@ -744,6 +777,10 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         scroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
         scroll.getVerticalScrollBar().setUnitIncrement(18);
         scroll.getHorizontalScrollBar().setUnitIncrement(18);
+        scroll.getVerticalScrollBar().setUI(new ModernScrollBarUI());
+        scroll.getHorizontalScrollBar().setUI(new ModernScrollBarUI());
+        scroll.getVerticalScrollBar().setPreferredSize(new Dimension(8, 0));
+        scroll.getHorizontalScrollBar().setPreferredSize(new Dimension(0, 8));
         return scroll;
     }
 
@@ -776,9 +813,9 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private void styleTextField(JTextField field) {
         field.setFont(UI_FONT);
         field.setForeground(TEXT);
-        field.setBackground(SURFACE_SOFT);
+        field.setBackground(Color.WHITE);
         field.setCaretColor(PRIMARY_DARK);
-        field.setBorder(new CompoundBorder(new RoundedBorder(SURFACE_SOFT, RADIUS_MD), pad(8, 11, 8, 11)));
+        field.setBorder(new CompoundBorder(new RoundedBorder(BORDER_LIGHT, RADIUS_MD), pad(8, 11, 8, 11)));
         field.setPreferredSize(new Dimension(field.getPreferredSize().width, INPUT_HEIGHT));
     }
 
@@ -789,7 +826,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         area.setCaretColor(PRIMARY_DARK);
         area.setLineWrap(true);
         area.setWrapStyleWord(true);
-        area.setBorder(pad(10, 12, 10, 12));
+        area.setBorder(pad(12, 14, 12, 14));
     }
 
     private void installMessageShortcuts() {
@@ -806,6 +843,12 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
     private JButton createButton(String text, boolean primary) {
         return new StyledButton(text, primary);
+    }
+
+    private JButton createRailButton(String text, String tooltip) {
+        JButton button = new RailButton(text);
+        button.setToolTipText(tooltip);
+        return button;
     }
 
     private JButton createToolButton(String text) {
@@ -4604,6 +4647,88 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
     }
 
+    class RailButton extends JButton {
+        private boolean hover = false;
+
+        RailButton(String text) {
+            super(text);
+            setFont(new Font("Microsoft YaHei UI", Font.BOLD, 14));
+            setForeground(new Color(74, 80, 92));
+            setFocusPainted(false);
+            setOpaque(false);
+            setContentAreaFilled(false);
+            setBorder(pad(0));
+            setPreferredSize(new Dimension(40, 40));
+            setMinimumSize(new Dimension(40, 40));
+            setMaximumSize(new Dimension(40, 40));
+            setAlignmentX(Component.CENTER_ALIGNMENT);
+            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            addMouseListener(new MouseAdapter() {
+                public void mouseEntered(MouseEvent e) {
+                    hover = true;
+                    repaint();
+                }
+
+                public void mouseExited(MouseEvent e) {
+                    hover = false;
+                    repaint();
+                }
+            });
+        }
+
+        protected void paintComponent(Graphics g) {
+            Graphics2D g2 = (Graphics2D)g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            if(hover) {
+                g2.setColor(new Color(255, 255, 255, 185));
+                g2.fillRoundRect(2, 2, getWidth() - 4, getHeight() - 4, RADIUS_LG, RADIUS_LG);
+                setForeground(PRIMARY_DARK);
+            } else {
+                setForeground(new Color(74, 80, 92));
+            }
+            g2.dispose();
+            super.paintComponent(g);
+        }
+    }
+
+    class ModernScrollBarUI extends javax.swing.plaf.basic.BasicScrollBarUI {
+        protected void configureScrollBarColors() {
+            thumbColor = new Color(198, 203, 213);
+            trackColor = new Color(0, 0, 0, 0);
+        }
+
+        protected JButton createDecreaseButton(int orientation) {
+            return createZeroButton();
+        }
+
+        protected JButton createIncreaseButton(int orientation) {
+            return createZeroButton();
+        }
+
+        private JButton createZeroButton() {
+            JButton button = new JButton();
+            button.setPreferredSize(new Dimension(0, 0));
+            button.setMinimumSize(new Dimension(0, 0));
+            button.setMaximumSize(new Dimension(0, 0));
+            return button;
+        }
+
+        protected void paintTrack(Graphics g, JComponent c, Rectangle trackBounds) {
+        }
+
+        protected void paintThumb(Graphics g, JComponent c, Rectangle thumbBounds) {
+            if(!scrollbar.isEnabled() || thumbBounds.width <= 0 || thumbBounds.height <= 0) return;
+            Graphics2D g2 = (Graphics2D)g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setColor(isThumbRollover() ? new Color(158, 165, 177) : thumbColor);
+            g2.fillRoundRect(thumbBounds.x + 2, thumbBounds.y + 2,
+                    Math.max(4, thumbBounds.width - 4),
+                    Math.max(4, thumbBounds.height - 4),
+                    8, 8);
+            g2.dispose();
+        }
+    }
+
     class RoundedBorder extends AbstractBorder {
         private Color color;
         private int radius;
@@ -5211,12 +5336,20 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             Graphics2D g2 = (Graphics2D)g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             Color fill = outgoing ? PRIMARY : avatarColor(name);
+            int size = Math.min(getWidth(), getHeight()) - 2;
+            if(size <= 0) {
+                g2.dispose();
+                return;
+            }
+            int x0 = (getWidth() - size) / 2;
+            int y0 = (getHeight() - size) / 2;
+            int radius = Math.max(RADIUS_MD, size / 4);
             g2.setColor(fill);
-            g2.fillRoundRect(1, 1, 34, 34, RADIUS_LG, RADIUS_LG);
+            g2.fillRoundRect(x0, y0, size, size, radius, radius);
             g2.setColor(new Color(255, 255, 255, 70));
-            g2.drawRoundRect(2, 2, 32, 32, RADIUS_LG, RADIUS_LG);
+            g2.drawRoundRect(x0 + 1, y0 + 1, size - 2, size - 2, radius, radius);
             g2.setColor(Color.WHITE);
-            g2.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 13));
+            g2.setFont(new Font("Microsoft YaHei UI", Font.BOLD, Math.max(12, size / 3)));
             String text = avatarText(name);
             FontMetrics fm = g2.getFontMetrics();
             int x = (getWidth() - fm.stringWidth(text)) / 2;
