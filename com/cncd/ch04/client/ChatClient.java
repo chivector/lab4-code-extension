@@ -167,6 +167,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private Map<String, JLabel> trackedStatusLabels = new HashMap<String, JLabel>();
     private Map<String, java.util.List<String>> pendingReadReceipts = new HashMap<String, java.util.List<String>>();
     private LinkedList<String> localBroadcastEchoes = new LinkedList<String>();
+    private VoicePlayback activeVoicePlayback;
     private MomentsDialog activeMomentsDialog;
     private Path logFile;
     private DateTimeFormatter displayTime = DateTimeFormatter.ofPattern("HH:mm:ss");
@@ -5179,6 +5180,305 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
     }
 
+    private void toggleVoicePlayback(ChatMessage message, JButton button,
+            JLabel statusLabel, VoiceWaveform waveform, String idleText) {
+        if(message == null || message.fileData == null || message.fileData.length == 0) return;
+
+        VoicePlayback previous = null;
+        VoicePlayback next = null;
+        synchronized(this) {
+            if(activeVoicePlayback != null && activeVoicePlayback.isFor(message)) {
+                previous = activeVoicePlayback;
+                activeVoicePlayback = null;
+            } else {
+                previous = activeVoicePlayback;
+                next = new VoicePlayback(message, button, statusLabel, waveform, idleText);
+                activeVoicePlayback = next;
+            }
+        }
+        if(previous != null) previous.stopPlayback();
+        if(next != null) next.start();
+    }
+
+    private synchronized boolean clearActiveVoicePlayback(VoicePlayback playback) {
+        if(activeVoicePlayback == playback) {
+            activeVoicePlayback = null;
+            return true;
+        }
+        return false;
+    }
+
+    private String voiceIdleText(ChatMessage message, boolean outgoing) {
+        String duration = voiceDurationText(message.fileData);
+        String prefix = duration.length() == 0 ? "" : duration + " · ";
+        return prefix + displayFileSize(message.fileSize) + " · "
+                + (outgoing ? "已发送，可播放" : "点击播放，可另存");
+    }
+
+    private String voiceDurationText(byte[] data) {
+        int seconds = wavDurationSeconds(data);
+        return seconds <= 0 ? "" : formatDuration(seconds);
+    }
+
+    private String formatDuration(int seconds) {
+        seconds = Math.max(0, seconds);
+        return String.format("%02d:%02d", seconds / 60, seconds % 60);
+    }
+
+    private int wavDurationSeconds(byte[] data) {
+        if(data == null || data.length < 44) return -1;
+        if(!asciiEquals(data, 0, "RIFF") || !asciiEquals(data, 8, "WAVE")) return -1;
+        int byteRate = 0;
+        int dataSize = 0;
+        int offset = 12;
+        while(offset + 8 <= data.length) {
+            String chunkId = new String(data, offset, 4, StandardCharsets.US_ASCII);
+            int chunkSize = littleEndianInt(data, offset + 4);
+            if(chunkSize < 0) break;
+            int chunkData = offset + 8;
+            if("fmt ".equals(chunkId) && chunkData + 16 <= data.length) {
+                byteRate = littleEndianInt(data, chunkData + 8);
+            } else if("data".equals(chunkId)) {
+                dataSize = Math.min(chunkSize, data.length - chunkData);
+                break;
+            }
+            offset = chunkData + chunkSize + (chunkSize % 2);
+        }
+        if(byteRate <= 0 || dataSize <= 0) return -1;
+        return Math.max(1, (int)Math.round(dataSize / (double)byteRate));
+    }
+
+    private boolean asciiEquals(byte[] data, int offset, String value) {
+        if(data == null || offset < 0 || offset + value.length() > data.length) return false;
+        for(int i=0;i<value.length();i++) {
+            if((byte)value.charAt(i) != data[offset + i]) return false;
+        }
+        return true;
+    }
+
+    private int littleEndianInt(byte[] data, int offset) {
+        if(data == null || offset < 0 || offset + 4 > data.length) return -1;
+        return (data[offset] & 0xff)
+                | ((data[offset + 1] & 0xff) << 8)
+                | ((data[offset + 2] & 0xff) << 16)
+                | ((data[offset + 3] & 0xff) << 24);
+    }
+
+    private AudioFormat playbackFormat(AudioFormat source) {
+        int channels = source.getChannels() <= 0 ? 1 : source.getChannels();
+        float sampleRate = source.getSampleRate() <= 0 ? 16000.0f : source.getSampleRate();
+        int sampleSize = source.getSampleSizeInBits() <= 0 ? 16 : source.getSampleSizeInBits();
+        boolean pcmSigned = AudioFormat.Encoding.PCM_SIGNED.equals(source.getEncoding());
+        if(pcmSigned && sampleSize == 16 && !source.isBigEndian()) return source;
+        return new AudioFormat(AudioFormat.Encoding.PCM_SIGNED,
+                sampleRate, 16, channels, channels * 2, sampleRate, false);
+    }
+
+    private String fileExtension(String name) {
+        String value = name == null ? "" : name.trim();
+        int dot = value.lastIndexOf('.');
+        if(dot < 0 || dot == value.length() - 1) return ".audio";
+        String extension = value.substring(dot).replaceAll("[^A-Za-z0-9.]", "");
+        if(extension.length() < 2 || extension.length() > 12) return ".audio";
+        return extension;
+    }
+
+    private boolean openVoiceInSystemPlayer(ChatMessage message) {
+        try {
+            if(!Desktop.isDesktopSupported()
+                    || !Desktop.getDesktop().isSupported(Desktop.Action.OPEN)) return false;
+            Path dir = currentUserDir != null
+                    ? currentUserDir.resolve("voice-playback")
+                    : Paths.get(System.getProperty("java.io.tmpdir"), "cncd-chat-voice-playback");
+            Files.createDirectories(dir);
+            Path temp = Files.createTempFile(dir, "voice_", fileExtension(message.fileName));
+            Files.write(temp, message.fileData);
+            temp.toFile().deleteOnExit();
+            Desktop.getDesktop().open(temp.toFile());
+            return true;
+        } catch(Exception e) {
+            return false;
+        }
+    }
+
+    class VoicePlayback {
+        private ChatMessage message;
+        private JButton button;
+        private JLabel statusLabel;
+        private VoiceWaveform waveform;
+        private String idleText;
+        private volatile boolean stopped = false;
+        private volatile SourceDataLine line;
+        private Thread thread;
+
+        VoicePlayback(ChatMessage message, JButton button, JLabel statusLabel,
+                VoiceWaveform waveform, String idleText) {
+            this.message = message;
+            this.button = button;
+            this.statusLabel = statusLabel;
+            this.waveform = waveform;
+            this.idleText = idleText;
+        }
+
+        boolean isFor(ChatMessage other) {
+            return message == other;
+        }
+
+        void start() {
+            setUi("停止", "播放中 · " + idleText, true);
+            thread = new Thread(new Runnable() {
+                public void run() {
+                    play();
+                }
+            }, "voice-playback-" + safeFileName(message.fileName));
+            thread.setDaemon(true);
+            thread.start();
+        }
+
+        void stopPlayback() {
+            stopped = true;
+            SourceDataLine currentLine = line;
+            if(currentLine != null) {
+                try {
+                    currentLine.stop();
+                    currentLine.close();
+                } catch(Exception e) {
+                }
+            }
+            if(thread != null) thread.interrupt();
+            setUi("播放", "已停止 · " + idleText, false);
+        }
+
+        private void play() {
+            String doneText = null;
+            String errorText = null;
+            try {
+                streamWithJavaSound();
+                if(!stopped) doneText = "播放完成 · " + idleText;
+            } catch(UnsupportedAudioFileException e) {
+                if(!stopped) {
+                    if(openVoiceInSystemPlayer(message)) doneText = "已用系统播放器打开 · " + idleText;
+                    else errorText = "当前格式不支持直接播放，请另存后打开";
+                }
+            } catch(Exception e) {
+                if(!stopped) errorText = "播放失败：" + e.getMessage();
+            } finally {
+                SourceDataLine currentLine = line;
+                line = null;
+                try {
+                    if(currentLine != null) {
+                        if(!stopped) currentLine.drain();
+                        currentLine.stop();
+                        currentLine.close();
+                    }
+                } catch(Exception e) {
+                }
+                clearActiveVoicePlayback(this);
+                if(!stopped) {
+                    setUi("播放", errorText == null ? doneText : errorText, false);
+                }
+            }
+        }
+
+        private void streamWithJavaSound() throws Exception {
+            BufferedInputStream input = new BufferedInputStream(new ByteArrayInputStream(message.fileData));
+            AudioInputStream original = AudioSystem.getAudioInputStream(input);
+            AudioInputStream stream = original;
+            try {
+                AudioFormat targetFormat = playbackFormat(original.getFormat());
+                if(!targetFormat.matches(original.getFormat())) {
+                    if(!AudioSystem.isConversionSupported(targetFormat, original.getFormat())) {
+                        throw new UnsupportedAudioFileException("不支持的音频编码");
+                    }
+                    stream = AudioSystem.getAudioInputStream(targetFormat, original);
+                }
+                DataLine.Info info = new DataLine.Info(SourceDataLine.class, targetFormat);
+                if(!AudioSystem.isLineSupported(info)) {
+                    throw new LineUnavailableException("系统没有可用的播放设备");
+                }
+                SourceDataLine output = (SourceDataLine)AudioSystem.getLine(info);
+                line = output;
+                output.open(targetFormat);
+                output.start();
+                byte[] buffer = new byte[4096];
+                int read;
+                while(!stopped && (read = stream.read(buffer, 0, buffer.length)) != -1) {
+                    output.write(buffer, 0, read);
+                }
+            } finally {
+                try {
+                    stream.close();
+                } catch(Exception e) {
+                }
+                if(stream != original) {
+                    try {
+                        original.close();
+                    } catch(Exception e) {
+                    }
+                }
+            }
+        }
+
+        private void setUi(final String buttonText, final String statusText, final boolean playing) {
+            SwingUtilities.invokeLater(new Runnable() {
+                public void run() {
+                    if(button != null) button.setText(buttonText);
+                    if(statusLabel != null && statusText != null) statusLabel.setText(statusText);
+                    if(waveform != null) waveform.setPlaying(playing);
+                }
+            });
+        }
+    }
+
+    class VoiceWaveform extends JComponent {
+        private boolean playing = false;
+        private int phase = 0;
+        private javax.swing.Timer timer;
+
+        VoiceWaveform() {
+            setPreferredSize(new Dimension(118, 30));
+            setMinimumSize(new Dimension(90, 30));
+        }
+
+        void setPlaying(boolean playing) {
+            this.playing = playing;
+            if(playing) {
+                if(timer == null) {
+                    timer = new javax.swing.Timer(90, new ActionListener() {
+                        public void actionPerformed(ActionEvent e) {
+                            phase++;
+                            repaint();
+                        }
+                    });
+                }
+                if(!timer.isRunning()) timer.start();
+            } else if(timer != null) {
+                timer.stop();
+            }
+            repaint();
+        }
+
+        protected void paintComponent(Graphics g) {
+            Graphics2D g2 = (Graphics2D)g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            int bars = 16;
+            int gap = 4;
+            int barWidth = 3;
+            int totalWidth = bars * barWidth + (bars - 1) * gap;
+            int startX = Math.max(0, (getWidth() - totalWidth) / 2);
+            int centerY = getHeight() / 2;
+            for(int i=0;i<bars;i++) {
+                double wave = Math.sin((i + phase) * 0.65);
+                int base = 8 + (i % 4) * 3;
+                int height = playing ? base + (int)Math.round((wave + 1) * 5) : base;
+                g2.setColor(playing ? PRIMARY_DARK : MUTED);
+                g2.fillRoundRect(startX + i * (barWidth + gap), centerY - height / 2,
+                        barWidth, height, barWidth, barWidth);
+            }
+            g2.dispose();
+        }
+    }
+
     class BubblePanel extends JPanel {
         private Color fill;
         private Color stroke;
@@ -5528,6 +5828,9 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
 
         private Component createFileBubbleBlock(final ChatMessage message, boolean outgoing, JLabel name) {
+            if(isAudioFile(message.fileName) && message.fileData != null) {
+                return createVoiceBubbleBlock(message, outgoing, name);
+            }
             if(isImageFile(message.fileName) && message.fileData != null) {
                 ImageIcon imageIcon = createThumbnailIcon(message.fileData, availableBubbleWidth(160, 240), 170);
                 if(imageIcon != null) {
@@ -5586,6 +5889,118 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             block.add(card);
             block.setMaximumSize(new Dimension(470, 104));
             return block;
+        }
+
+        private Component createVoiceBubbleBlock(final ChatMessage message, final boolean outgoing, JLabel name) {
+            JPanel block = new JPanel();
+            block.setOpaque(false);
+            block.setLayout(new BoxLayout(block, BoxLayout.Y_AXIS));
+
+            final BubblePanel card = new BubblePanel(outgoing ? OUTGOING_BUBBLE : INCOMING_BUBBLE,
+                    outgoing ? new Color(125, 211, 88) : BORDER_LIGHT,
+                    RADIUS_LG);
+            card.setLayout(new BorderLayout(SPACE_MD, 0));
+            card.setBorder(pad(11, 12, 11, 12));
+            int cardWidth = availableBubbleWidth(300, 380);
+            card.setMaximumSize(new Dimension(cardWidth, 88));
+            card.setPreferredSize(new Dimension(cardWidth, 88));
+            card.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            card.setToolTipText("点击播放语音");
+
+            final JButton playButton = createVoiceBubbleButton("播放", outgoing);
+            final VoiceWaveform waveform = new VoiceWaveform();
+            final String idleText = voiceIdleText(message, outgoing);
+            final JLabel meta = new JLabel(idleText);
+            meta.setFont(UI_FONT_SMALL);
+            meta.setForeground(outgoing ? PRIMARY_DARK : MUTED);
+
+            JPanel textPanel = new JPanel();
+            textPanel.setOpaque(false);
+            textPanel.setLayout(new BoxLayout(textPanel, BoxLayout.Y_AXIS));
+            JLabel title = new JLabel("语音消息");
+            title.setFont(UI_FONT_BOLD);
+            title.setForeground(TEXT);
+            JLabel fileName = new JLabel(clipFileName(message.fileName));
+            fileName.setFont(CHAT_TEXT_SMALL_FONT);
+            fileName.setForeground(MUTED);
+            textPanel.add(title);
+            textPanel.add(Box.createVerticalStrut(2));
+            textPanel.add(fileName);
+            textPanel.add(Box.createVerticalStrut(SPACE_XS));
+            textPanel.add(meta);
+
+            JPanel center = new JPanel(new BorderLayout(SPACE_SM, 0));
+            center.setOpaque(false);
+            center.add(waveform, BorderLayout.WEST);
+            center.add(textPanel, BorderLayout.CENTER);
+
+            card.add(playButton, BorderLayout.WEST);
+            card.add(center, BorderLayout.CENTER);
+
+            if(!outgoing) {
+                JButton saveButton = createVoiceBubbleButton("另存", false);
+                saveButton.setPreferredSize(new Dimension(58, 32));
+                saveButton.addActionListener(new ActionListener() {
+                    public void actionPerformed(ActionEvent e) {
+                        saveReceivedFile(message, null);
+                        if(message.savedFile != null) {
+                            meta.setText("已保存 · " + idleText);
+                            meta.setForeground(SUCCESS);
+                        }
+                    }
+                });
+                card.add(saveButton, BorderLayout.EAST);
+            }
+
+            ActionListener playAction = new ActionListener() {
+                public void actionPerformed(ActionEvent e) {
+                    toggleVoicePlayback(message, playButton, meta, waveform, idleText);
+                }
+            };
+            playButton.addActionListener(playAction);
+            card.addMouseListener(new MouseAdapter() {
+                public void mouseClicked(MouseEvent e) {
+                    toggleVoicePlayback(message, playButton, meta, waveform, idleText);
+                }
+            });
+
+            card.setAlignmentX(outgoing ? Component.RIGHT_ALIGNMENT : Component.LEFT_ALIGNMENT);
+            block.add(name);
+            block.add(Box.createVerticalStrut(SPACE_XS));
+            block.add(card);
+            block.setMaximumSize(new Dimension(520, 112));
+            return block;
+        }
+
+        private JButton createVoiceBubbleButton(final String text, final boolean outgoing) {
+            JButton button = new JButton(text) {
+                protected void paintComponent(Graphics g) {
+                    Graphics2D g2 = (Graphics2D)g.create();
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                    Color fill = outgoing ? new Color(255, 255, 255, 165) : PRIMARY;
+                    Color stroke = outgoing ? new Color(125, 211, 88) : PRIMARY_DARK;
+                    if(!isEnabled()) {
+                        fill = new Color(232, 237, 245);
+                        stroke = BORDER_LIGHT;
+                    }
+                    g2.setColor(fill);
+                    g2.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 1, RADIUS_LG, RADIUS_LG);
+                    g2.setColor(stroke);
+                    g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, RADIUS_LG, RADIUS_LG);
+                    g2.dispose();
+                    super.paintComponent(g);
+                }
+            };
+            button.setFont(UI_FONT_BOLD);
+            button.setForeground(outgoing ? PRIMARY_DARK : Color.WHITE);
+            button.setFocusPainted(false);
+            button.setOpaque(false);
+            button.setContentAreaFilled(false);
+            button.setBorder(pad(5, 10, 5, 10));
+            button.setPreferredSize(new Dimension(58, 36));
+            button.setMinimumSize(new Dimension(58, 36));
+            button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            return button;
         }
 
         private Component createImageBubbleBlock(final ChatMessage message, boolean outgoing,
