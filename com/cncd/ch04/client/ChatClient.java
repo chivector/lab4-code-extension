@@ -32,6 +32,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private static final String MOMENT_SYNC_ITEM_PREFIX = "__MOMENT_ITEM__|";
     private static final String MOMENT_DELETE_PREFIX = "__MOMENT_DELETE__|";
     private static final String VIDEO_CALL_PREFIX = "__VIDEO_CALL__|";
+    private static final String PRIVATE_MESSAGE_PREFIX = "__CHAT_MSG__|";
+    private static final String READ_RECEIPT_PREFIX = "__READ__|";
     private static final String VIDEO_INVITE = "INVITE";
     private static final String VIDEO_ACCEPT = "ACCEPT";
     private static final String VIDEO_REJECT = "REJECT";
@@ -41,6 +43,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private static final String ACCOUNT_FILE = "accounts.properties";
     private static final String LOGIN_PREF_FILE = "login.properties";
     private static final String MOMENTS_FILE = "moments.txt";
+    private static final String PENDING_MESSAGES_FILE = "pending-private.txt";
     private static final String MOMENT_RECORD_VERSION = "M2";
     private static final int MOMENT_TEXT_LIMIT = 300;
     private static final String BROADCAST_CHAT = "广播";
@@ -148,6 +151,11 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private Map<String, VideoCallWindow> videoCallWindows = new HashMap<String, VideoCallWindow>();
     private Set<String> pendingVideoCalls = new HashSet<String>();
     private long conversationSequence = 0;
+    private Map<String, PendingPrivateMessage> pendingPrivateMessages = new LinkedHashMap<String, PendingPrivateMessage>();
+    private Map<String, ChatMessage> trackedOutgoingMessages = new LinkedHashMap<String, ChatMessage>();
+    private Map<String, JLabel> trackedStatusLabels = new HashMap<String, JLabel>();
+    private Map<String, java.util.List<String>> pendingReadReceipts = new HashMap<String, java.util.List<String>>();
+    private LinkedList<String> localBroadcastEchoes = new LinkedList<String>();
     private MomentsDialog activeMomentsDialog;
     private Path logFile;
     private DateTimeFormatter displayTime = DateTimeFormatter.ofPattern("HH:mm:ss");
@@ -170,6 +178,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         byte[] fileData;
         File savedFile;
         String conversationKey;
+        String messageId;
+        String deliveryStatus;
 
         ChatMessage(MessageKind kind, String sender, String body, String time) {
             this.kind = kind;
@@ -194,6 +204,21 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         String time = "";
         int unread = 0;
         long sequence = 0;
+    }
+
+    private static class PendingPrivateMessage {
+        String id;
+        String target;
+        String body;
+        String time;
+        ChatMessage message;
+
+        PendingPrivateMessage(String id, String target, String body, String time) {
+            this.id = id;
+            this.target = target;
+            this.body = body;
+            this.time = time;
+        }
     }
 
     private static class LoginData {
@@ -929,6 +954,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         rebuildConversationList(BROADCAST_CHAT);
         initLogFile(login.username);
         loadHistoryPreview();
+        loadPendingPrivateMessages();
     }
 
     private static Path clientDataRoot() {
@@ -1056,6 +1082,14 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
         if(text.startsWith("[private sent to ")) return null;
 
+        if(text.startsWith("Unable to find user ")) {
+            String target = text.substring("Unable to find user ".length()).trim();
+            if(markLatestOutgoingAsQueued(target)) {
+                return new ChatMessage(MessageKind.SYSTEM, "系统",
+                        target + " 当前离线，消息已转为待发送。", time);
+            }
+        }
+
         if(text.startsWith("[private to ")) {
             int end = text.indexOf(']');
             String body = end >= 0 ? text.substring(end + 1).trim() : text;
@@ -1097,6 +1131,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             String sender = text.substring(0, colon).trim();
             String body = text.substring(colon + 1).trim();
             if(sender.length() > 0 && sender.indexOf(' ') < 0 && !sender.equalsIgnoreCase("Server")) {
+                if(sender.equalsIgnoreCase(ownNick()) && consumeLocalBroadcastEcho(body)) return null;
                 return withConversation(new ChatMessage(messageKindFor(sender), sender, body, time), BROADCAST_CHAT);
             }
         }
@@ -1107,6 +1142,27 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private ChatMessage withConversation(ChatMessage message, String conversationKey) {
         if(message != null) message.conversationKey = conversationKey;
         return message;
+    }
+
+    private void rememberLocalBroadcastEcho(String body) {
+        localBroadcastEchoes.addLast(normalizeMessageBody(body));
+        while(localBroadcastEchoes.size() > 12) localBroadcastEchoes.removeFirst();
+    }
+
+    private boolean consumeLocalBroadcastEcho(String body) {
+        String normalized = normalizeMessageBody(body);
+        Iterator<String> it = localBroadcastEchoes.iterator();
+        while(it.hasNext()) {
+            if(normalized.equals(it.next())) {
+                it.remove();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String normalizeMessageBody(String body) {
+        return body == null ? "" : body.trim();
     }
 
     private boolean isSystemMessage(String text) {
@@ -1136,10 +1192,34 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     }
 
     private boolean handleProtocolMessage(String sender, String body, String time) {
+        if(handlePrivateTextProtocolMessage(sender, body, time)) return true;
+        if(handleReadReceiptMessage(sender, body)) return true;
         if(handleVideoCallProtocolMessage(sender, body)) return true;
         if(handleMomentProtocolMessage(sender, body)) return true;
         if(handleGroupProtocolMessage(sender, body, time)) return true;
         return handleFriendProtocolMessage(sender, body);
+    }
+
+    private boolean handlePrivateTextProtocolMessage(String sender, String body, String time) {
+        if(!body.startsWith(PRIVATE_MESSAGE_PREFIX)) return false;
+        String payload = body.substring(PRIVATE_MESSAGE_PREFIX.length());
+        String[] parts = payload.split("\\|", 2);
+        if(parts.length != 2) return true;
+        String messageId = parts[0];
+        String message = decodeToken(parts[1]);
+        ChatMessage chatMessage = withConversation(new ChatMessage(MessageKind.INCOMING,
+                sender, message, time), sender);
+        chatMessage.messageId = messageId;
+        if(historyWindow != null) historyWindow.addMessage(chatMessage);
+        rememberReadReceipt(sender, messageId);
+        return true;
+    }
+
+    private boolean handleReadReceiptMessage(String sender, String body) {
+        if(!body.startsWith(READ_RECEIPT_PREFIX)) return false;
+        String messageId = body.substring(READ_RECEIPT_PREFIX.length()).trim();
+        if(messageId.length() > 0) updateOutgoingStatus(messageId, "已读");
+        return true;
     }
 
     private boolean handleVideoCallProtocolMessage(String sender, String body) {
@@ -1380,12 +1460,13 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             if(conversationTitleLabel != null) conversationTitleLabel.setText(selected);
             boolean online = visibleUsers.contains(selected);
             if(conversationSubtitleLabel != null) {
-                conversationSubtitleLabel.setText(online ? "当前为私聊，只发送给 " + selected : "好友离线，暂不能发送消息");
+                conversationSubtitleLabel.setText(online ? "当前为私聊，只发送给 " + selected : "好友离线，文字消息将待发送");
             }
             if(conversationAvatar != null) conversationAvatar.setAvatar(selected, false);
             if(buttonFile != null) buttonFile.setEnabled(true);
         }
         markConversationRead(selected);
+        sendPendingReadReceipts(selected);
         updateVideoButtonState();
         updateAttachmentPreview();
         updateSendButtonState();
@@ -1456,6 +1537,78 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
     }
 
+    private void rememberReadReceipt(String sender, String messageId) {
+        if(sender == null || sender.length() == 0 || messageId == null || messageId.length() == 0) return;
+        java.util.List<String> ids = pendingReadReceipts.get(sender);
+        if(ids == null) {
+            ids = new ArrayList<String>();
+            pendingReadReceipts.put(sender, ids);
+        }
+        if(!ids.contains(messageId)) ids.add(messageId);
+        if(isSelectedConversation(sender)) sendPendingReadReceipts(sender);
+    }
+
+    private void sendPendingReadReceipts(String target) {
+        if(target == null || target.length() == 0) return;
+        if(ck == null || !ck.isConnected() || !visibleUsers.contains(target)) return;
+        java.util.List<String> ids = pendingReadReceipts.remove(target);
+        if(ids == null) return;
+        for(int i=0;i<ids.size();i++) {
+            ck.sendMessage("/msg " + target + " " + READ_RECEIPT_PREFIX + ids.get(i));
+        }
+    }
+
+    private void updateOutgoingStatus(String messageId, String status) {
+        if(messageId == null || messageId.length() == 0) return;
+        ChatMessage message = trackedOutgoingMessages.get(messageId);
+        if(message != null) message.deliveryStatus = status;
+        JLabel label = trackedStatusLabels.get(messageId);
+        if(label != null) {
+            label.setText(senderLineText(message));
+            label.repaint();
+        }
+    }
+
+    private String senderLineText(ChatMessage message) {
+        if(message == null) return "";
+        boolean outgoing = message.kind == MessageKind.OUTGOING;
+        String text = (outgoing ? "我 / " : "") + message.sender + "  " + message.time;
+        if(outgoing && message.deliveryStatus != null && message.deliveryStatus.length() > 0) {
+            text += " · " + message.deliveryStatus;
+        }
+        return text;
+    }
+
+    private void registerStatusLabel(ChatMessage message, JLabel label) {
+        if(message == null || label == null) return;
+        if(message.messageId != null && message.messageId.length() > 0
+                && message.kind == MessageKind.OUTGOING) {
+            trackedStatusLabels.put(message.messageId, label);
+        }
+    }
+
+    private boolean markLatestOutgoingAsQueued(String target) {
+        if(target == null || target.length() == 0) return false;
+        ChatMessage latest = null;
+        Iterator<ChatMessage> it = trackedOutgoingMessages.values().iterator();
+        while(it.hasNext()) {
+            ChatMessage message = it.next();
+            if(target.equals(message.conversationKey) && "未读".equals(message.deliveryStatus)) {
+                latest = message;
+            }
+        }
+        if(latest == null || latest.messageId == null || pendingPrivateMessages.containsKey(latest.messageId)) {
+            return false;
+        }
+        PendingPrivateMessage pending = new PendingPrivateMessage(latest.messageId,
+                target, latest.body, latest.time);
+        pending.message = latest;
+        pendingPrivateMessages.put(latest.messageId, pending);
+        updateOutgoingStatus(latest.messageId, "待发送");
+        savePendingPrivateMessages();
+        return true;
+    }
+
     private boolean isSelectedConversation(String key) {
         return key != null && onlineList != null && key.equals(onlineList.getSelectedValue());
     }
@@ -1510,7 +1663,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                 return;
             }
             if(!visibleUsers.contains(target)) {
-                addMsg("<font color=\"#ff0000\">对方当前离线，暂不能发送附件。</font>");
+                addMsg("<font color=\"#ff0000\">对方当前离线，附件暂不能离线发送，请先发送文字消息或等待对方上线。</font>");
                 return;
             }
             if(hasText && toSend.startsWith("/")) {
@@ -1554,13 +1707,9 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         } else if(selectedGroupName != null) {
             if(!sendGroupMessage(selectedGroupName, toSend)) return;
         } else if(selectedChatTarget != null) {
-            if(!visibleUsers.contains(selectedChatTarget)) {
-                addMsg("<font color=\"#ff0000\">对方当前离线，暂不能发送消息。</font>");
-                return;
-            }
             sendPrivate(selectedChatTarget, toSend);
         } else {
-            ck.sendMessage(toSend);
+            sendBroadcastMessage(toSend);
         }
         lastMsg = "" + toSend;
         msgWindow.setText("");
@@ -1734,6 +1883,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         chatGroups.clear();
         sentFriendRequests.clear();
         incomingFriendRequests.clear();
+        pendingPrivateMessages.clear();
         currentProfile = new Properties();
         try {
             if(currentUserDir == null) return;
@@ -1772,6 +1922,69 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         } catch(Exception e) {
             JOptionPane.showMessageDialog(this, "加载本地用户数据失败：" + e.getMessage());
         }
+    }
+
+    private void loadPendingPrivateMessages() {
+        if(currentUserDir == null) return;
+        Path file = currentUserDir.resolve(PENDING_MESSAGES_FILE);
+        if(!Files.exists(file)) return;
+        try {
+            java.util.List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+            for(int i=0;i<lines.size();i++) {
+                String line = lines.get(i);
+                String[] parts = line.split("\\t", 4);
+                if(parts.length != 4) continue;
+                String id = parts[0];
+                String target = decodeToken(parts[1]);
+                String time = decodeToken(parts[2]);
+                String body = decodeToken(parts[3]);
+                if(id.length() == 0 || target.length() == 0) continue;
+                PendingPrivateMessage pending = new PendingPrivateMessage(id, target, body, time);
+                ChatMessage message = createOutgoingTrackedMessage(target, "发给 " + target,
+                        body, time.length() == 0 ? LocalDateTime.now().format(displayTime) : time,
+                        id, "待发送");
+                pending.message = message;
+                pendingPrivateMessages.put(id, pending);
+                showOutgoingTextMessage(message);
+            }
+        } catch(Exception e) {
+            addMsg("<font color=\"#ff0000\">加载待发送消息失败：" + escapeHtml(e.getMessage()) + "</font>");
+        }
+    }
+
+    private void savePendingPrivateMessages() {
+        if(currentUserDir == null) return;
+        try {
+            Files.createDirectories(currentUserDir);
+            java.util.List<String> lines = new ArrayList<String>();
+            Iterator<PendingPrivateMessage> it = pendingPrivateMessages.values().iterator();
+            while(it.hasNext()) {
+                PendingPrivateMessage pending = it.next();
+                lines.add(pending.id + "\t" + encodeToken(pending.target) + "\t"
+                        + encodeToken(pending.time) + "\t" + encodeToken(pending.body));
+            }
+            Files.write(currentUserDir.resolve(PENDING_MESSAGES_FILE), lines, StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+        } catch(Exception e) {
+            addMsg("<font color=\"#ff0000\">保存待发送消息失败：" + escapeHtml(e.getMessage()) + "</font>");
+        }
+    }
+
+    private void flushPendingPrivateMessages(Set<String> onlineUsers) {
+        if(ck == null || !ck.isConnected() || pendingPrivateMessages.size() == 0) return;
+        java.util.List<String> sent = new ArrayList<String>();
+        Iterator<PendingPrivateMessage> it = pendingPrivateMessages.values().iterator();
+        while(it.hasNext()) {
+            PendingPrivateMessage pending = it.next();
+            if(!onlineUsers.contains(pending.target)) continue;
+            sendTrackedPrivateMessage(pending.target, pending.id, pending.body);
+            sent.add(pending.id);
+            appendLog("[private delivered from queue to " + pending.target + "] " + pending.body);
+        }
+        for(int i=0;i<sent.size();i++) {
+            pendingPrivateMessages.remove(sent.get(i));
+        }
+        if(sent.size() > 0) savePendingPrivateMessages();
     }
 
     private void saveFriends() {
@@ -2465,23 +2678,62 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     }
 
     private void sendPrivate(String target, String message) {
-        ck.sendMessage("/msg " + target + " " + message);
-        showOutgoingTextMessage(target, "发给 " + target, message);
+        String messageId = newMessageId();
+        String time = LocalDateTime.now().format(displayTime);
+        boolean online = visibleUsers.contains(target);
+        ChatMessage chatMessage = createOutgoingTrackedMessage(target, "发给 " + target,
+                message, time, messageId, online ? "未读" : "待发送");
+        showOutgoingTextMessage(chatMessage);
+        if(online) {
+            sendTrackedPrivateMessage(target, messageId, message);
+        } else {
+            PendingPrivateMessage pending = new PendingPrivateMessage(messageId, target, message, time);
+            pending.message = chatMessage;
+            pendingPrivateMessages.put(messageId, pending);
+            savePendingPrivateMessages();
+        }
         appendLog("[private to " + target + "] " + message);
     }
 
-    private void showOutgoingTextMessage(final String conversationKey, final String sender, final String message) {
-        final String time = LocalDateTime.now().format(displayTime);
+    private ChatMessage createOutgoingTrackedMessage(String conversationKey, String sender,
+            String message, String time, String messageId, String status) {
+        ChatMessage chatMessage = withConversation(new ChatMessage(MessageKind.OUTGOING,
+                sender, message, time), conversationKey);
+        chatMessage.messageId = messageId;
+        chatMessage.deliveryStatus = status;
+        trackedOutgoingMessages.put(messageId, chatMessage);
+        return chatMessage;
+    }
+
+    private String newMessageId() {
+        return UUID.randomUUID().toString().replace("-", "");
+    }
+
+    private void sendTrackedPrivateMessage(String target, String messageId, String message) {
+        ck.sendMessage("/msg " + target + " " + PRIVATE_MESSAGE_PREFIX
+                + messageId + "|" + encodeToken(message));
+        updateOutgoingStatus(messageId, "未读");
+    }
+
+    private void showOutgoingTextMessage(final ChatMessage chatMessage) {
         Runnable show = new Runnable() {
             public void run() {
                 if(historyWindow != null) {
-                    historyWindow.addMessage(withConversation(new ChatMessage(MessageKind.OUTGOING,
-                            sender, message, time), conversationKey));
+                    historyWindow.addMessage(chatMessage);
                 }
             }
         };
         if(SwingUtilities.isEventDispatchThread()) show.run();
         else SwingUtilities.invokeLater(show);
+    }
+
+    private void sendBroadcastMessage(String message) {
+        rememberLocalBroadcastEcho(message);
+        ck.sendMessage(message);
+        ChatMessage chatMessage = withConversation(new ChatMessage(MessageKind.OUTGOING,
+                ownNick(), message, LocalDateTime.now().format(displayTime)), BROADCAST_CHAT);
+        if(historyWindow != null) historyWindow.addMessage(chatMessage);
+        appendLog("[broadcast] " + message);
     }
 
     private boolean sendGroupMessage(String groupName, String message) {
@@ -2697,8 +2949,18 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             }
         }
         visibleUsers = nextUsers;
+        flushPendingPrivateMessages(nextUsers);
+        flushPendingReadReceipts(nextUsers);
         rebuildConversationList(previousSelection);
         updateVideoButtonState();
+    }
+
+    private void flushPendingReadReceipts(Set<String> onlineUsers) {
+        Iterator<String> it = new ArrayList<String>(pendingReadReceipts.keySet()).iterator();
+        while(it.hasNext()) {
+            String user = it.next();
+            if(onlineUsers.contains(user)) sendPendingReadReceipts(user);
+        }
     }
 
     public void receiveFile(String sender, String filename, String base64) {
@@ -4634,10 +4896,11 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             block.setOpaque(false);
             block.setLayout(new BoxLayout(block, BoxLayout.Y_AXIS));
 
-            JLabel name = new JLabel((outgoing ? "我 / " : "") + message.sender + "  " + message.time);
+            JLabel name = new JLabel(senderLineText(message));
             name.setFont(CHAT_TEXT_SMALL_FONT);
             name.setForeground(MUTED);
             name.setAlignmentX(outgoing ? Component.RIGHT_ALIGNMENT : Component.LEFT_ALIGNMENT);
+            registerStatusLabel(message, name);
 
             if(message.fileMessage) {
                 return createFileBubbleBlock(message, outgoing, name);
