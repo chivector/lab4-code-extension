@@ -48,6 +48,7 @@ public class WebChatLauncher {
     private static final String SERVER_MOMENT_ITEM_PREFIX = "__SERVER_MOMENT__|";
     private static final String PRIVATE_MESSAGE_PREFIX = "__CHAT_MSG__|";
     private static final String READ_RECEIPT_PREFIX = "__READ__|";
+    private static final String VIDEO_CALL_PREFIX = "__VIDEO_CALL__|";
     private static final long MAX_FILE_BYTES = 5L * 1024L * 1024L;
     private static final Path WEB_ROOT = Paths.get("web").toAbsolutePath().normalize();
 
@@ -104,6 +105,13 @@ public class WebChatLauncher {
                         value(json, "fileName", "file.bin"),
                         value(json, "mime", "application/octet-stream"),
                         value(json, "dataBase64", ""));
+            }
+        });
+        server.createContext("/api/video", new JsonActionHandler(chatService) {
+            protected ApiResult handle(Map<String, String> json) {
+                return service.sendVideoSignal(value(json, "target", ""),
+                        value(json, "action", ""),
+                        value(json, "payload", ""));
             }
         });
         server.createContext("/api/state", new StateHandler(chatService));
@@ -338,6 +346,19 @@ public class WebChatLauncher {
             return ApiResult.ok(message.toJson());
         }
 
+        synchronized ApiResult sendVideoSignal(String target, String action, String payload) {
+            if(!isReady()) return ApiResult.error("请先连接服务器");
+            target = target == null ? "" : target.trim();
+            action = action == null ? "" : action.trim();
+            payload = payload == null ? "" : payload;
+            if(empty(target) || BROADCAST_CHAT.equals(target)) return ApiResult.error("视频通话需要选择在线私聊对象");
+            if(!users.contains(target)) return ApiResult.error("对方当前离线，无法视频通话");
+            if(empty(action)) return ApiResult.error("视频通话指令为空");
+            kernel.sendMessage("/msg " + target + " " + VIDEO_CALL_PREFIX
+                    + action + (payload.length() == 0 ? "" : "|" + payload));
+            return ApiResult.ok("{\"sent\":true}");
+        }
+
         public void onKernelMessage(String raw) {
             if(raw == null) return;
             if(raw.startsWith(USERS_PREFIX)) {
@@ -451,6 +472,18 @@ public class WebChatLauncher {
                 }
                 return true;
             }
+            if(body.startsWith(VIDEO_CALL_PREFIX)) {
+                String payload = body.substring(VIDEO_CALL_PREFIX.length()).trim();
+                String action = payload;
+                String data = "";
+                int split = payload.indexOf('|');
+                if(split >= 0) {
+                    action = payload.substring(0, split);
+                    data = payload.substring(split + 1);
+                }
+                broadcast("video", videoEventJson(sender, action, data));
+                return true;
+            }
             return false;
         }
 
@@ -470,6 +503,18 @@ public class WebChatLauncher {
         private void sendTrackedPrivate(String target, String id, String body) {
             kernel.sendMessage("/msg " + target + " " + PRIVATE_MESSAGE_PREFIX
                     + id + "|" + encodeToken(body));
+        }
+
+        private String videoEventJson(String sender, String action, String payload) {
+            StringBuilder out = new StringBuilder();
+            out.append('{');
+            appendField(out, "sender", sender);
+            out.append(',');
+            appendField(out, "action", action);
+            out.append(',');
+            appendField(out, "payload", payload);
+            out.append('}');
+            return out.toString();
         }
 
         private void markLatestPrivateAsQueued(String target) {

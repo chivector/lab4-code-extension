@@ -1,4 +1,15 @@
 const BROADCAST = '广播';
+const VIDEO = {
+  invite: 'INVITE',
+  accept: 'ACCEPT',
+  reject: 'REJECT',
+  hangup: 'HANGUP',
+  frame: 'FRAME',
+  screenStop: 'SCREEN_STOP',
+};
+const VIDEO_FRAME_INTERVAL_MS = 520;
+const VIDEO_FRAME_WIDTH = 320;
+const VIDEO_FRAME_HEIGHT = 180;
 const QUICK_EMOJIS = [
   '😀', '😄', '😂', '😊', '😍', '😘', '😎', '🤔', '😭', '😡',
   '👍', '👏', '🙏', '💪', '👌', '🤝', '❤️', '🎉', '🔥', '✨',
@@ -23,6 +34,16 @@ let mediaRecorder;
 let recordedChunks = [];
 let recordTimer;
 let recordStartedAt = 0;
+let videoCall = {
+  peer: '',
+  active: false,
+  connected: false,
+  localStream: null,
+  frameTimer: null,
+  callTimer: null,
+  connectedAt: 0,
+  cameraOn: true,
+};
 
 const $ = (selector) => document.querySelector(selector);
 const conversationList = $('#conversationList');
@@ -34,6 +55,10 @@ const emojiPanel = $('#emojiPanel');
 const charCount = $('#charCount');
 const dropOverlay = $('#dropOverlay');
 const toastStack = $('#toastStack');
+const videoModal = $('#videoCallModal');
+const localVideoPreview = $('#localVideoPreview');
+const remoteVideoFrame = $('#remoteVideoFrame');
+const remoteVideoPlaceholder = $('#remoteVideoPlaceholder');
 
 function boot() {
   $('#hostInput').value = state.host;
@@ -66,6 +91,7 @@ function bindEvents() {
     messageInput.focus();
   });
   $('#emojiButton').addEventListener('click', () => emojiPanel.classList.toggle('hidden'));
+  $('#videoHeaderButton').addEventListener('click', startVideoCall);
   $('#imageButton').addEventListener('click', () => $('#imageInput').click());
   $('#imageHeaderButton').addEventListener('click', () => $('#imageInput').click());
   $('#fileButton').addEventListener('click', () => $('#fileInput').click());
@@ -73,6 +99,8 @@ function bindEvents() {
   $('#voiceButton').addEventListener('click', toggleRecording);
   $('#stopRecordButton').addEventListener('click', stopAndSendRecording);
   $('#cancelRecordButton').addEventListener('click', cancelRecording);
+  $('#cameraToggleButton').addEventListener('click', toggleCallCamera);
+  $('#hangupVideoButton').addEventListener('click', hangupVideoCall);
   $('#imageInput').addEventListener('change', (event) => sendPickedFile(event.target.files[0]));
   $('#fileInput').addEventListener('change', (event) => sendPickedFile(event.target.files[0]));
   $('#searchInput').addEventListener('input', renderConversations);
@@ -111,6 +139,12 @@ function connectEvents() {
     loadState();
   });
   events.addEventListener('messageStatus', () => loadState());
+  events.addEventListener('video', (event) => {
+    try {
+      handleVideoEvent(JSON.parse(event.data));
+    } catch (error) {
+    }
+  });
   events.onerror = () => setStatus('实时连接正在重试', 'error');
 }
 
@@ -261,6 +295,269 @@ function canSendAttachment() {
     return false;
   }
   return true;
+}
+
+function canStartVideoCall() {
+  if (!state.connected) {
+    setStatus('请先连接服务器', 'error');
+    showToast('请先连接服务器', 'error');
+    return false;
+  }
+  if (!state.active || state.active === BROADCAST) {
+    setStatus('请选择一个在线私聊对象', 'error');
+    showToast('请选择一个在线私聊对象', 'error');
+    return false;
+  }
+  if (!state.users.includes(state.active)) {
+    setStatus('对方当前离线，无法视频通话', 'error');
+    showToast('对方当前离线，无法视频通话', 'error');
+    return false;
+  }
+  return true;
+}
+
+async function startVideoCall() {
+  if (!canStartVideoCall()) return;
+  if (videoCall.active) {
+    showToast('当前已经在视频通话中', 'warn');
+    return;
+  }
+  const peer = state.active;
+  try {
+    openVideoWindow(peer, '正在打开摄像头...');
+    await startLocalCamera();
+    startFrameSender();
+    await sendVideoSignal(peer, VIDEO.invite);
+    setVideoStatus(`正在等待 ${peer} 接听`);
+    showToast(`已向 ${peer} 发起视频通话`);
+  } catch (error) {
+    closeVideoWindow(false);
+    setStatus('无法打开摄像头：' + error.message, 'error');
+    showToast('无法打开摄像头：' + error.message, 'error');
+  }
+}
+
+async function handleVideoEvent(event) {
+  if (!event || !event.sender || event.sender.toLowerCase() === state.nick.toLowerCase()) return;
+  const sender = event.sender;
+  const action = event.action || '';
+  const payload = event.payload || '';
+
+  if (action === VIDEO.invite) {
+    await handleIncomingVideoInvite(sender);
+  } else if (action === VIDEO.accept) {
+    if (!isCallWith(sender)) return;
+    videoCall.connected = true;
+    videoCall.connectedAt = Date.now();
+    startCallTimer();
+    setVideoStatus('正在通话');
+    showToast(`${sender} 已接听视频通话`);
+  } else if (action === VIDEO.reject) {
+    if (!isCallWith(sender)) return;
+    setVideoStatus('对方已拒绝通话');
+    showToast(`${sender} 已拒绝视频通话`, 'warn');
+    window.setTimeout(() => closeVideoWindow(false), 900);
+  } else if (action === VIDEO.hangup) {
+    if (!isCallWith(sender)) return;
+    setVideoStatus('对方已挂断');
+    showToast(`${sender} 已结束视频通话`, 'warn');
+    window.setTimeout(() => closeVideoWindow(false), 900);
+  } else if (action === VIDEO.frame) {
+    if (!isCallWith(sender)) return;
+    showRemoteFrame(payload);
+  } else if (action === VIDEO.screenStop) {
+    if (!isCallWith(sender)) return;
+    clearRemoteFrame('对方摄像头已关闭');
+  }
+}
+
+async function handleIncomingVideoInvite(sender) {
+  if (videoCall.active) {
+    await sendVideoSignal(sender, VIDEO.reject);
+    showToast(`${sender} 发来视频通话，已因当前通话占用而拒绝`, 'warn');
+    return;
+  }
+  const accepted = window.confirm(`${sender} 邀请你视频通话，是否接听？`);
+  if (!accepted) {
+    await sendVideoSignal(sender, VIDEO.reject);
+    showToast(`已拒绝 ${sender} 的视频通话`, 'warn');
+    return;
+  }
+  try {
+    openVideoWindow(sender, '正在打开摄像头...');
+    await startLocalCamera();
+    startFrameSender();
+    videoCall.connected = true;
+    videoCall.connectedAt = Date.now();
+    startCallTimer();
+    await sendVideoSignal(sender, VIDEO.accept);
+    setVideoStatus('正在通话');
+    showToast(`已接听 ${sender} 的视频通话`);
+  } catch (error) {
+    closeVideoWindow(false);
+    await sendVideoSignal(sender, VIDEO.reject);
+    setStatus('无法打开摄像头：' + error.message, 'error');
+    showToast('无法打开摄像头：' + error.message, 'error');
+  }
+}
+
+function openVideoWindow(peer, statusText) {
+  videoCall.peer = peer;
+  videoCall.active = true;
+  videoCall.connected = false;
+  videoCall.connectedAt = 0;
+  videoCall.cameraOn = true;
+  $('#videoPeerName').textContent = peer;
+  $('#videoCallTimer').textContent = '00:00';
+  $('#cameraToggleButton').textContent = '关摄像头';
+  setVideoStatus(statusText || '等待接听');
+  clearRemoteFrame('等待对方画面');
+  videoModal.classList.remove('hidden');
+}
+
+async function startLocalCamera() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    throw new Error('当前浏览器不支持摄像头');
+  }
+  stopLocalCamera();
+  videoCall.localStream = await navigator.mediaDevices.getUserMedia({
+    video: {
+      width: { ideal: VIDEO_FRAME_WIDTH },
+      height: { ideal: VIDEO_FRAME_HEIGHT },
+      facingMode: 'user',
+    },
+    audio: false,
+  });
+  localVideoPreview.srcObject = videoCall.localStream;
+  await localVideoPreview.play();
+}
+
+function startFrameSender() {
+  stopFrameSender();
+  videoCall.frameTimer = window.setInterval(sendCameraFrame, VIDEO_FRAME_INTERVAL_MS);
+  sendCameraFrame();
+}
+
+async function sendCameraFrame() {
+  if (!videoCall.active || !videoCall.peer || !videoCall.localStream || !videoCall.cameraOn) return;
+  if (!localVideoPreview.videoWidth || !localVideoPreview.videoHeight) return;
+  const canvas = document.createElement('canvas');
+  canvas.width = VIDEO_FRAME_WIDTH;
+  canvas.height = VIDEO_FRAME_HEIGHT;
+  const context = canvas.getContext('2d');
+  context.fillStyle = '#111';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  const scale = Math.max(canvas.width / localVideoPreview.videoWidth, canvas.height / localVideoPreview.videoHeight);
+  const width = localVideoPreview.videoWidth * scale;
+  const height = localVideoPreview.videoHeight * scale;
+  const x = (canvas.width - width) / 2;
+  const y = (canvas.height - height) / 2;
+  context.drawImage(localVideoPreview, x, y, width, height);
+  const payload = canvas.toDataURL('image/jpeg', 0.48).split(',')[1] || '';
+  if (payload) await sendVideoSignal(videoCall.peer, VIDEO.frame, payload);
+}
+
+function showRemoteFrame(payload) {
+  if (!payload) return;
+  remoteVideoFrame.src = `data:image/jpeg;base64,${payload}`;
+  remoteVideoFrame.classList.add('visible');
+  remoteVideoPlaceholder.classList.add('hidden');
+  if (videoCall.connected) setVideoStatus('正在通话');
+}
+
+function clearRemoteFrame(text) {
+  remoteVideoFrame.removeAttribute('src');
+  remoteVideoFrame.classList.remove('visible');
+  remoteVideoPlaceholder.textContent = text || '等待对方画面';
+  remoteVideoPlaceholder.classList.remove('hidden');
+}
+
+async function toggleCallCamera() {
+  if (!videoCall.active || !videoCall.localStream) return;
+  videoCall.cameraOn = !videoCall.cameraOn;
+  videoCall.localStream.getVideoTracks().forEach((track) => {
+    track.enabled = videoCall.cameraOn;
+  });
+  $('#cameraToggleButton').textContent = videoCall.cameraOn ? '关摄像头' : '开摄像头';
+  setVideoStatus(videoCall.cameraOn ? '正在通话' : '摄像头已关闭');
+  if (!videoCall.cameraOn) await sendVideoSignal(videoCall.peer, VIDEO.screenStop);
+  else sendCameraFrame();
+}
+
+async function hangupVideoCall() {
+  const peer = videoCall.peer;
+  if (peer) await sendVideoSignal(peer, VIDEO.hangup);
+  closeVideoWindow(false);
+  if (peer) showToast(`已结束与 ${peer} 的视频通话`);
+}
+
+function closeVideoWindow(sendHangup) {
+  const peer = videoCall.peer;
+  if (sendHangup && peer) sendVideoSignal(peer, VIDEO.hangup);
+  stopFrameSender();
+  stopCallTimer();
+  stopLocalCamera();
+  videoCall = {
+    peer: '',
+    active: false,
+    connected: false,
+    localStream: null,
+    frameTimer: null,
+    callTimer: null,
+    connectedAt: 0,
+    cameraOn: true,
+  };
+  clearRemoteFrame('等待对方画面');
+  videoModal.classList.add('hidden');
+}
+
+function stopLocalCamera() {
+  if (videoCall.localStream) {
+    videoCall.localStream.getTracks().forEach((track) => track.stop());
+  }
+  localVideoPreview.srcObject = null;
+  videoCall.localStream = null;
+}
+
+function stopFrameSender() {
+  if (videoCall.frameTimer) {
+    window.clearInterval(videoCall.frameTimer);
+    videoCall.frameTimer = null;
+  }
+}
+
+function startCallTimer() {
+  stopCallTimer();
+  updateCallTimer();
+  videoCall.callTimer = window.setInterval(updateCallTimer, 1000);
+}
+
+function stopCallTimer() {
+  if (videoCall.callTimer) {
+    window.clearInterval(videoCall.callTimer);
+    videoCall.callTimer = null;
+  }
+}
+
+function updateCallTimer() {
+  if (!videoCall.connectedAt) {
+    $('#videoCallTimer').textContent = '00:00';
+    return;
+  }
+  const seconds = Math.max(0, Math.floor((Date.now() - videoCall.connectedAt) / 1000));
+  $('#videoCallTimer').textContent = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+function setVideoStatus(text) {
+  $('#videoCallStatus').textContent = text || '';
+}
+
+function isCallWith(peer) {
+  return videoCall.active && videoCall.peer && videoCall.peer.toLowerCase() === String(peer || '').toLowerCase();
+}
+
+async function sendVideoSignal(target, action, payload = '') {
+  return api('/api/video', { target, action, payload });
 }
 
 function setupDragAndDrop() {
@@ -504,6 +801,9 @@ function updateHeader() {
   } else {
     $('#chatSubtitle').textContent = '离线 · 文字消息会待发送，文件暂不可发送';
   }
+  const canVideo = state.connected && state.active !== BROADCAST && state.users.includes(state.active);
+  $('#videoHeaderButton').disabled = !canVideo;
+  $('#videoHeaderButton').title = canVideo ? `和 ${state.active} 视频通话` : '请选择在线私聊对象';
 }
 
 function updateSendButton() {

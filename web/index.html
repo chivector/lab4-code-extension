@@ -61,6 +61,7 @@
           </div>
         </div>
         <div class="header-actions">
+          <button class="icon-button" id="videoHeaderButton" title="视频通话"><span class="ui-icon icon-video"></span></button>
           <button class="icon-button" id="imageHeaderButton" title="发送图片"><span class="ui-icon icon-image"></span></button>
           <button class="icon-button" id="fileHeaderButton" title="发送文件"><span class="ui-icon icon-file"></span></button>
           <button class="icon-button" title="更多"><span class="ui-icon icon-more"></span></button>
@@ -108,6 +109,27 @@
       <div class="record-actions">
         <button id="cancelRecordButton">取消</button>
         <button id="stopRecordButton">停止并发送</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="video-call-modal hidden" id="videoCallModal">
+    <div class="video-call-window">
+      <div class="video-call-head">
+        <div>
+          <h2 id="videoPeerName">视频通话</h2>
+          <p id="videoCallStatus">等待接听</p>
+        </div>
+        <span id="videoCallTimer">00:00</span>
+      </div>
+      <div class="video-stage">
+        <img id="remoteVideoFrame" alt="对方画面">
+        <div class="video-placeholder" id="remoteVideoPlaceholder">等待对方画面</div>
+        <video id="localVideoPreview" autoplay muted playsinline></video>
+      </div>
+      <div class="video-call-actions">
+        <button id="cameraToggleButton">关摄像头</button>
+        <button id="hangupVideoButton" class="danger">挂断</button>
       </div>
     </div>
   </div>
