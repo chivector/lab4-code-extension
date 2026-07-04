@@ -7,6 +7,7 @@ import javax.imageio.ImageIO;
 import javax.sound.sampled.*;
 import java.awt.*;
 import java.awt.event.*;
+import java.awt.image.BufferedImage;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -38,8 +39,16 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private static final String VIDEO_ACCEPT = "ACCEPT";
     private static final String VIDEO_REJECT = "REJECT";
     private static final String VIDEO_HANGUP = "HANGUP";
+    private static final String VIDEO_AUDIO = "AUDIO";
+    private static final String VIDEO_FRAME = "FRAME";
+    private static final String VIDEO_SCREEN_STOP = "SCREEN_STOP";
 
     private static final long MAX_FILE_BYTES = 5L * 1024L * 1024L;
+    private static final int CALL_AUDIO_CHUNK_BYTES = 1024;
+    private static final int CALL_AUDIO_QUEUE_LIMIT = 45;
+    private static final int CALL_VIDEO_WIDTH = 320;
+    private static final int CALL_VIDEO_HEIGHT = 180;
+    private static final int CALL_VIDEO_INTERVAL_MS = 650;
     private static final String ACCOUNT_FILE = "accounts.properties";
     private static final String LOGIN_PREF_FILE = "login.properties";
     private static final String MOMENTS_FILE = "moments.txt";
@@ -1283,7 +1292,13 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private boolean handleVideoCallProtocolMessage(String sender, String body) {
         if(!body.startsWith(VIDEO_CALL_PREFIX)) return false;
         String action = body.substring(VIDEO_CALL_PREFIX.length()).trim();
-        if(VIDEO_INVITE.equals(action)) {
+        if(action.startsWith(VIDEO_AUDIO + "|")) {
+            handleVideoAudioFrame(sender, action.substring((VIDEO_AUDIO + "|").length()));
+        } else if(action.startsWith(VIDEO_FRAME + "|")) {
+            handleVideoFrame(sender, action.substring((VIDEO_FRAME + "|").length()));
+        } else if(VIDEO_SCREEN_STOP.equals(action)) {
+            handleVideoScreenStop(sender);
+        } else if(VIDEO_INVITE.equals(action)) {
             handleIncomingVideoInvite(sender);
         } else if(VIDEO_ACCEPT.equals(action)) {
             handleVideoAccepted(sender);
@@ -1885,9 +1900,31 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         showVideoSystemMessage(sender + " 已结束视频通话。");
     }
 
+    private void handleVideoAudioFrame(String sender, String encoded) {
+        VideoCallWindow window = videoWindowFor(sender);
+        if(window != null) window.receiveAudioFrame(encoded);
+    }
+
+    private void handleVideoFrame(String sender, String encoded) {
+        VideoCallWindow window = videoWindowFor(sender);
+        if(window != null) window.receiveVideoFrame(encoded);
+    }
+
+    private void handleVideoScreenStop(String sender) {
+        VideoCallWindow window = videoWindowFor(sender);
+        if(window != null) window.remoteScreenStopped();
+    }
+
     private void sendVideoSignal(String target, String action) {
         if(ck != null && ck.isConnected() && target != null && target.length() > 0) {
             ck.sendMessage("/msg " + target + " " + VIDEO_CALL_PREFIX + action);
+        }
+    }
+
+    private void sendVideoMedia(String target, String type, String payload) {
+        if(ck != null && ck.isConnected() && target != null && target.length() > 0
+                && type != null && payload != null) {
+            ck.sendMessage("/msg " + target + " " + VIDEO_CALL_PREFIX + type + "|" + payload);
         }
     }
 
@@ -4166,18 +4203,38 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         private boolean outgoing;
         private boolean connected = false;
         private boolean finished = false;
-        private boolean cameraOn = true;
+        private boolean screenSharing = false;
         private boolean micOn = true;
+        private volatile boolean audioRunning = false;
+        private volatile boolean playbackRunning = false;
+        private volatile boolean videoRunning = false;
         private long connectedAt = 0L;
         private JLabel statusLabel;
         private JLabel timerLabel;
         private VideoSurface remoteSurface;
         private VideoSurface localSurface;
-        private JButton cameraButton;
+        private JButton screenButton;
         private JButton micButton;
         private JButton hangupButton;
+        private TargetDataLine callMicLine;
+        private SourceDataLine callSpeakerLine;
+        private Thread audioSendThread;
+        private Thread audioPlaybackThread;
+        private Thread videoSendThread;
+        private LinkedList<AudioChunk> audioQueue = new LinkedList<AudioChunk>();
+        private String playbackFormatKey = "";
         private javax.swing.Timer frameTimer;
         private javax.swing.Timer callTimer;
+
+        class AudioChunk {
+            String formatKey;
+            byte[] data;
+
+            AudioChunk(String formatKey, byte[] data) {
+                this.formatKey = formatKey;
+                this.data = data;
+            }
+        }
 
         VideoCallWindow(Frame owner, String peer, boolean outgoing) {
             super(owner, "视频通话 - " + peer, false);
@@ -4240,12 +4297,12 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
             JPanel controls = new JPanel(new FlowLayout(FlowLayout.CENTER, SPACE_MD, SPACE_MD));
             controls.setBackground(new Color(20, 20, 20));
-            cameraButton = createCallButton("关摄像头", new Color(62, 62, 62));
+            screenButton = createCallButton("共享屏幕", new Color(62, 62, 62));
             micButton = createCallButton("静音", new Color(62, 62, 62));
             hangupButton = createCallButton("挂断", new Color(224, 68, 68));
-            cameraButton.addActionListener(new ActionListener() {
+            screenButton.addActionListener(new ActionListener() {
                 public void actionPerformed(ActionEvent e) {
-                    toggleCamera();
+                    toggleScreenShare();
                 }
             });
             micButton.addActionListener(new ActionListener() {
@@ -4258,7 +4315,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                     hangupLocal();
                 }
             });
-            controls.add(cameraButton);
+            controls.add(screenButton);
             controls.add(micButton);
             controls.add(hangupButton);
 
@@ -4300,9 +4357,10 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             if(finished) return;
             connected = true;
             connectedAt = System.currentTimeMillis();
-            if(statusLabel != null) statusLabel.setText("正在通话");
+            if(statusLabel != null) statusLabel.setText("正在通话 · 麦克风已连接，可手动共享屏幕");
             if(remoteSurface != null) remoteSurface.setWaiting(false);
             startCallTimer();
+            startAudioMedia();
         }
 
         void finishFromRemote(String text) {
@@ -4310,6 +4368,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             finished = true;
             connected = false;
             if(statusLabel != null) statusLabel.setText(text);
+            stopCallMedia();
             disableControls();
             stopCallTimer();
             javax.swing.Timer timer = new javax.swing.Timer(1200, new ActionListener() {
@@ -4329,17 +4388,339 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             disposeWindow();
         }
 
-        private void toggleCamera() {
-            cameraOn = !cameraOn;
-            localSurface.setCameraOn(cameraOn);
-            cameraButton.setText(cameraOn ? "关摄像头" : "开摄像头");
-            if(statusLabel != null && connected) statusLabel.setText(cameraOn ? "正在通话" : "摄像头已关闭");
+        private void toggleScreenShare() {
+            if(!connected || finished) return;
+            if(screenSharing) {
+                stopVideoSender();
+                sendVideoSignal(peer, VIDEO_SCREEN_STOP);
+                if(statusLabel != null) statusLabel.setText("正在通话 · 屏幕共享已停止");
+            } else {
+                startVideoSender();
+            }
         }
 
         private void toggleMic() {
             micOn = !micOn;
             micButton.setText(micOn ? "静音" : "取消静音");
-            if(statusLabel != null && connected) statusLabel.setText(micOn ? "正在通话" : "麦克风已静音");
+            if(statusLabel != null && connected) statusLabel.setText(micOn ? "正在通话 · 麦克风已开启" : "正在通话 · 麦克风已静音");
+        }
+
+        private AudioFormat[] callAudioFormats() {
+            return new AudioFormat[] {
+                    new AudioFormat(16000.0f, 16, 1, true, false),
+                    new AudioFormat(8000.0f, 16, 1, true, false),
+                    new AudioFormat(44100.0f, 16, 1, true, false),
+                    new AudioFormat(48000.0f, 16, 1, true, false)
+            };
+        }
+
+        private AudioFormat callAudioFormat() {
+            return callAudioFormats()[0];
+        }
+
+        private AudioFormat chooseSupportedAudioFormat(Class<?> lineClass) {
+            AudioFormat[] formats = callAudioFormats();
+            for(int i=0;i<formats.length;i++) {
+                DataLine.Info info = new DataLine.Info(lineClass, formats[i]);
+                if(AudioSystem.isLineSupported(info)) return formats[i];
+            }
+            return null;
+        }
+
+        private String audioFormatKey(AudioFormat format) {
+            return String.valueOf(Math.round(format.getSampleRate()));
+        }
+
+        private AudioFormat audioFormatForKey(String key) {
+            try {
+                int rate = Integer.parseInt(key);
+                if(rate >= 8000 && rate <= 48000) {
+                    return new AudioFormat((float)rate, 16, 1, true, false);
+                }
+            } catch(Exception e) {
+            }
+            return callAudioFormat();
+        }
+
+        private void startAudioMedia() {
+            startAudioSender();
+            startAudioPlayback();
+        }
+
+        private void startAudioSender() {
+            if(audioRunning) return;
+            audioRunning = true;
+            audioSendThread = new Thread(new Runnable() {
+                public void run() {
+                    try {
+                        AudioFormat format = chooseSupportedAudioFormat(TargetDataLine.class);
+                        if(format == null) {
+                            setCallStatusLater("当前系统没有可用的麦克风输入格式");
+                            audioRunning = false;
+                            return;
+                        }
+                        String formatKey = audioFormatKey(format);
+                        DataLine.Info info = new DataLine.Info(TargetDataLine.class, format);
+                        callMicLine = (TargetDataLine)AudioSystem.getLine(info);
+                        callMicLine.open(format);
+                        callMicLine.start();
+                        int chunkBytes = Math.max(CALL_AUDIO_CHUNK_BYTES,
+                                (int)(format.getFrameRate() * format.getFrameSize() / 8));
+                        int frameSize = Math.max(1, format.getFrameSize());
+                        chunkBytes = Math.max(frameSize, chunkBytes - (chunkBytes % frameSize));
+                        byte[] buffer = new byte[chunkBytes];
+                        while(audioRunning && !finished) {
+                            int read = callMicLine.read(buffer, 0, buffer.length);
+                            if(read > 0 && micOn && connected) {
+                                byte[] chunk = Arrays.copyOf(buffer, read);
+                                sendVideoMedia(peer, VIDEO_AUDIO, formatKey + "|"
+                                        + Base64.getEncoder().encodeToString(chunk));
+                            }
+                        }
+                    } catch(Exception e) {
+                        if(audioRunning && !finished) setCallStatusLater("麦克风不可用：" + e.getMessage());
+                    } finally {
+                        closeMicLine();
+                        audioRunning = false;
+                    }
+                }
+            }, "call-audio-send-" + peer);
+            audioSendThread.setDaemon(true);
+            audioSendThread.start();
+        }
+
+        private void startAudioPlayback() {
+            if(playbackRunning) return;
+            playbackRunning = true;
+            audioPlaybackThread = new Thread(new Runnable() {
+                public void run() {
+                    try {
+                        while(playbackRunning && !finished) {
+                            AudioChunk chunk = nextAudioChunk();
+                            if(chunk != null && chunk.data != null && chunk.data.length > 0) {
+                                try {
+                                    ensureSpeakerLine(chunk.formatKey);
+                                    if(callSpeakerLine != null) {
+                                        callSpeakerLine.write(chunk.data, 0, chunk.data.length);
+                                    }
+                                } catch(Exception e) {
+                                    closeSpeakerLine(false);
+                                    if(playbackRunning && !finished) {
+                                        setCallStatusLater("扬声器无法播放对方音频：" + e.getMessage());
+                                        try {
+                                            Thread.sleep(120);
+                                        } catch(InterruptedException interrupted) {
+                                            Thread.currentThread().interrupt();
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } finally {
+                        closeSpeakerLine(false);
+                        playbackRunning = false;
+                    }
+                }
+            }, "call-audio-playback-" + peer);
+            audioPlaybackThread.setDaemon(true);
+            audioPlaybackThread.start();
+        }
+
+        private AudioChunk nextAudioChunk() {
+            synchronized(audioQueue) {
+                while(playbackRunning && audioQueue.isEmpty() && !finished) {
+                    try {
+                        audioQueue.wait(250);
+                    } catch(InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return null;
+                    }
+                }
+                return audioQueue.isEmpty() ? null : audioQueue.removeFirst();
+            }
+        }
+
+        void receiveAudioFrame(String encoded) {
+            if(encoded == null || encoded.length() == 0 || finished) return;
+            try {
+                String formatKey = audioFormatKey(callAudioFormat());
+                String payload = encoded;
+                int split = encoded.indexOf('|');
+                if(split > 0) {
+                    formatKey = encoded.substring(0, split);
+                    payload = encoded.substring(split + 1);
+                }
+                byte[] chunk = Base64.getDecoder().decode(payload);
+                synchronized(audioQueue) {
+                    while(audioQueue.size() > CALL_AUDIO_QUEUE_LIMIT) audioQueue.removeFirst();
+                    audioQueue.addLast(new AudioChunk(formatKey, chunk));
+                    audioQueue.notifyAll();
+                }
+            } catch(Exception e) {
+            }
+        }
+
+        private void ensureSpeakerLine(String formatKey) throws LineUnavailableException {
+            if(formatKey == null || formatKey.length() == 0) formatKey = audioFormatKey(callAudioFormat());
+            if(callSpeakerLine != null && callSpeakerLine.isOpen() && formatKey.equals(playbackFormatKey)) return;
+            closeSpeakerLine(false);
+            AudioFormat format = audioFormatForKey(formatKey);
+            DataLine.Info info = new DataLine.Info(SourceDataLine.class, format);
+            if(!AudioSystem.isLineSupported(info)) {
+                throw new LineUnavailableException("不支持 " + formatKey + "Hz PCM");
+            }
+            callSpeakerLine = (SourceDataLine)AudioSystem.getLine(info);
+            callSpeakerLine.open(format);
+            callSpeakerLine.start();
+            playbackFormatKey = formatKey;
+        }
+
+        private void closeMicLine() {
+            TargetDataLine line = callMicLine;
+            callMicLine = null;
+            try {
+                if(line != null) {
+                    line.stop();
+                    line.close();
+                }
+            } catch(Exception e) {
+            }
+        }
+
+        private void closeSpeakerLine(boolean drain) {
+            SourceDataLine line = callSpeakerLine;
+            callSpeakerLine = null;
+            playbackFormatKey = "";
+            try {
+                if(line != null) {
+                    if(drain) line.drain();
+                    else line.flush();
+                    line.stop();
+                    line.close();
+                }
+            } catch(Exception e) {
+            }
+        }
+
+        private void stopAudioMedia() {
+            audioRunning = false;
+            playbackRunning = false;
+            closeMicLine();
+            closeSpeakerLine(false);
+            if(audioSendThread != null) {
+                audioSendThread.interrupt();
+                audioSendThread = null;
+            }
+            if(audioPlaybackThread != null) {
+                audioPlaybackThread.interrupt();
+                audioPlaybackThread = null;
+            }
+            synchronized(audioQueue) {
+                audioQueue.clear();
+                audioQueue.notifyAll();
+            }
+        }
+
+        private void startVideoSender() {
+            if(videoRunning) return;
+            videoRunning = true;
+            screenSharing = true;
+            if(screenButton != null) screenButton.setText("停止共享");
+            if(statusLabel != null) statusLabel.setText("正在通话 · 正在共享屏幕");
+            videoSendThread = new Thread(new Runnable() {
+                public void run() {
+                    try {
+                        Robot robot = new Robot();
+                        Rectangle screen = new Rectangle(Toolkit.getDefaultToolkit().getScreenSize());
+                        while(videoRunning && !finished && connected) {
+                            BufferedImage capture = robot.createScreenCapture(screen);
+                            BufferedImage scaled = scaleImage(capture, CALL_VIDEO_WIDTH, CALL_VIDEO_HEIGHT);
+                            if(localSurface != null) localSurface.setFrame(scaled);
+                            String encoded = encodeImage(scaled);
+                            if(encoded.length() > 0) sendVideoMedia(peer, VIDEO_FRAME, encoded);
+                            try {
+                                Thread.sleep(CALL_VIDEO_INTERVAL_MS);
+                            } catch(InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                                break;
+                            }
+                        }
+                    } catch(Exception e) {
+                        setCallStatusLater("无法共享屏幕：" + e.getMessage());
+                    } finally {
+                        SwingUtilities.invokeLater(new Runnable() {
+                            public void run() {
+                                screenSharing = false;
+                                videoRunning = false;
+                                videoSendThread = null;
+                                if(screenButton != null) screenButton.setText("共享屏幕");
+                                if(localSurface != null) localSurface.clearFrame();
+                            }
+                        });
+                    }
+                }
+            }, "call-video-send-" + peer);
+            videoSendThread.setDaemon(true);
+            videoSendThread.start();
+        }
+
+        private void stopVideoSender() {
+            videoRunning = false;
+            screenSharing = false;
+            if(videoSendThread != null) videoSendThread.interrupt();
+            videoSendThread = null;
+            if(screenButton != null) screenButton.setText("共享屏幕");
+            if(localSurface != null) localSurface.clearFrame();
+        }
+
+        void receiveVideoFrame(String encoded) {
+            if(encoded == null || encoded.length() == 0 || finished) return;
+            try {
+                byte[] bytes = Base64.getDecoder().decode(encoded);
+                BufferedImage image = ImageIO.read(new ByteArrayInputStream(bytes));
+                if(image != null && remoteSurface != null) {
+                    remoteSurface.setFrame(image);
+                    if(statusLabel != null && connected) statusLabel.setText("正在通话 · 正在接收对方画面");
+                }
+            } catch(Exception e) {
+            }
+        }
+
+        void remoteScreenStopped() {
+            if(remoteSurface != null) remoteSurface.clearFrame();
+            if(statusLabel != null && connected) statusLabel.setText("正在通话 · 对方已停止共享屏幕");
+        }
+
+        private BufferedImage scaleImage(BufferedImage source, int maxWidth, int maxHeight) {
+            double scale = Math.min(maxWidth / (double)source.getWidth(),
+                    maxHeight / (double)source.getHeight());
+            int width = Math.max(1, (int)Math.round(source.getWidth() * scale));
+            int height = Math.max(1, (int)Math.round(source.getHeight() * scale));
+            BufferedImage scaled = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+            Graphics2D g2 = scaled.createGraphics();
+            g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g2.drawImage(source, 0, 0, width, height, null);
+            g2.dispose();
+            return scaled;
+        }
+
+        private String encodeImage(BufferedImage image) {
+            try {
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                ImageIO.write(image, "jpg", out);
+                return Base64.getEncoder().encodeToString(out.toByteArray());
+            } catch(Exception e) {
+                return "";
+            }
+        }
+
+        private void setCallStatusLater(final String text) {
+            SwingUtilities.invokeLater(new Runnable() {
+                public void run() {
+                    if(statusLabel != null && !finished) statusLabel.setText(text);
+                }
+            });
         }
 
         private void startFrameTimer() {
@@ -4377,12 +4758,19 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
 
         private void disableControls() {
-            if(cameraButton != null) cameraButton.setEnabled(false);
+            if(screenButton != null) screenButton.setEnabled(false);
             if(micButton != null) micButton.setEnabled(false);
             if(hangupButton != null) hangupButton.setEnabled(false);
         }
 
+        private void stopCallMedia() {
+            stopVideoSender();
+            stopAudioMedia();
+            if(remoteSurface != null) remoteSurface.clearFrame();
+        }
+
         private void disposeWindow() {
+            stopCallMedia();
             if(frameTimer != null) frameTimer.stop();
             stopCallTimer();
             removeVideoWindow(peer, this);
@@ -4395,6 +4783,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         private boolean local;
         private boolean cameraOn = true;
         private boolean waiting = false;
+        private BufferedImage frameImage;
         private int frame = 0;
 
         VideoSurface(String name, boolean local) {
@@ -4407,6 +4796,34 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         void setCameraOn(boolean cameraOn) {
             this.cameraOn = cameraOn;
             repaint();
+        }
+
+        void setFrame(final BufferedImage image) {
+            if(SwingUtilities.isEventDispatchThread()) {
+                frameImage = image;
+                repaint();
+            } else {
+                SwingUtilities.invokeLater(new Runnable() {
+                    public void run() {
+                        frameImage = image;
+                        repaint();
+                    }
+                });
+            }
+        }
+
+        void clearFrame() {
+            if(SwingUtilities.isEventDispatchThread()) {
+                frameImage = null;
+                repaint();
+            } else {
+                SwingUtilities.invokeLater(new Runnable() {
+                    public void run() {
+                        frameImage = null;
+                        repaint();
+                    }
+                });
+            }
         }
 
         void setWaiting(boolean waiting) {
@@ -4423,10 +4840,25 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             super.paintComponent(g);
             Graphics2D g2 = (Graphics2D)g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            if(cameraOn) paintVideo(g2);
+            BufferedImage image = frameImage;
+            if(image != null) paintFrame(g2, image);
+            else if(cameraOn) paintVideo(g2);
             else paintCameraOff(g2);
             paintOverlay(g2);
             g2.dispose();
+        }
+
+        private void paintFrame(Graphics2D g2, BufferedImage image) {
+            g2.setColor(Color.BLACK);
+            g2.fillRect(0, 0, getWidth(), getHeight());
+            double scale = Math.min(getWidth() / (double)image.getWidth(),
+                    getHeight() / (double)image.getHeight());
+            int width = Math.max(1, (int)Math.round(image.getWidth() * scale));
+            int height = Math.max(1, (int)Math.round(image.getHeight() * scale));
+            int x = (getWidth() - width) / 2;
+            int y = (getHeight() - height) / 2;
+            g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g2.drawImage(image, x, y, width, height, null);
         }
 
         private void paintVideo(Graphics2D g2) {
@@ -4499,7 +4931,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             g2.setFont(UI_FONT_SMALL);
             g2.drawString(name, 22, getHeight() - 17);
 
-            if(!local && cameraOn && !waiting) {
+            if(!local && frameImage != null && !waiting) {
                 int barsX = getWidth() - 48;
                 int barsY = getHeight() - 28;
                 for(int i=0;i<4;i++) {
