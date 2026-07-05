@@ -44,6 +44,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private static final String VIDEO_SCREEN_STOP = "SCREEN_STOP";
 
     private static final long MAX_FILE_BYTES = 5L * 1024L * 1024L;
+    private static final int MESSAGE_TEXT_LIMIT = 800;
     private static final int CALL_AUDIO_CHUNK_BYTES = 1024;
     private static final int CALL_AUDIO_QUEUE_LIMIT = 45;
     private static final int CALL_VIDEO_WIDTH = 320;
@@ -53,6 +54,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private static final String LOGIN_PREF_FILE = "login.properties";
     private static final String MOMENTS_FILE = "moments.txt";
     private static final String PENDING_MESSAGES_FILE = "pending-private.txt";
+    private static final String PENDING_DELIVERIES_FILE = "pending-deliveries.txt";
     private static final String MOMENT_RECORD_VERSION = "M2";
     private static final int MOMENT_TEXT_LIMIT = 300;
     private static final String BROADCAST_CHAT = "广播";
@@ -87,7 +89,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private static final int SPACE_MD = 12;
     private static final int SPACE_LG = 16;
     private static final int SPACE_XL = 20;
-    private static final int RAIL_WIDTH = 56;
+    private static final int RAIL_WIDTH = 76;
     private static final int SIDEBAR_WIDTH = 300;
     private static final int BUTTON_HEIGHT = 34;
     private static final int INPUT_HEIGHT = 38;
@@ -132,7 +134,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     JButton buttonCreateGroup;
     JButton buttonProfile, buttonMoments;
     JLabel statusLabel, connectionDotLabel, conversationTitleLabel, conversationSubtitleLabel;
-    JLabel conversationStateLabel, composerHintLabel;
+    JLabel conversationStateLabel, composerHintLabel, composerCountLabel;
     JLabel sidebarNameLabel, sidebarSignatureLabel;
     JPanel attachmentPanel;
     JLabel attachmentIconLabel, attachmentNameLabel, attachmentMetaLabel;
@@ -164,6 +166,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private Set<String> pendingVideoCalls = new HashSet<String>();
     private long conversationSequence = 0;
     private Map<String, PendingPrivateMessage> pendingPrivateMessages = new LinkedHashMap<String, PendingPrivateMessage>();
+    private Map<String, PendingDelivery> pendingDeliveries = new LinkedHashMap<String, PendingDelivery>();
     private Map<String, ChatMessage> trackedOutgoingMessages = new LinkedHashMap<String, ChatMessage>();
     private Map<String, JLabel> trackedStatusLabels = new HashMap<String, JLabel>();
     private Map<String, java.util.List<String>> pendingReadReceipts = new HashMap<String, java.util.List<String>>();
@@ -230,6 +233,22 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             this.id = id;
             this.target = target;
             this.body = body;
+            this.time = time;
+        }
+    }
+
+    private static class PendingDelivery {
+        String id;
+        String target;
+        String body;
+        String note;
+        String time;
+
+        PendingDelivery(String id, String target, String body, String note, String time) {
+            this.id = id;
+            this.target = target;
+            this.body = body;
+            this.note = note;
             this.time = time;
         }
     }
@@ -399,12 +418,12 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         rail.add(logo);
         rail.add(Box.createVerticalStrut(SPACE_XL));
 
-        buttonRefresh = createRailButton("刷", "刷新在线列表");
-        buttonAddFriend = createRailButton("友", "添加选中好友");
-        buttonCreateGroup = createRailButton("群", "创建群聊");
-        buttonProfile = createRailButton("我", "个人资料");
-        buttonMoments = createRailButton("圈", "朋友圈");
-        buttonLog = createRailButton("记", "聊天记录");
+        buttonRefresh = createRailButton("刷新", "刷新在线列表");
+        buttonAddFriend = createRailButton("好友", "添加选中联系人为好友");
+        buttonCreateGroup = createRailButton("群聊", "创建群聊");
+        buttonProfile = createRailButton("资料", "编辑个人资料");
+        buttonMoments = createRailButton("动态", "朋友圈 / 动态");
+        buttonLog = createRailButton("记录", "打开聊天记录");
 
         buttonRefresh.addActionListener(this);
         buttonAddFriend.addActionListener(this);
@@ -582,11 +601,18 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         conversationStateLabel.setBorder(new CompoundBorder(
                 new RoundedBorder(new Color(194, 235, 210), RADIUS_XL),
                 pad(4, 10, 4, 10)));
-        textBlock.add(conversationTitleLabel);
+        JPanel titleLine = new JPanel();
+        titleLine.setOpaque(false);
+        titleLine.setLayout(new BoxLayout(titleLine, BoxLayout.X_AXIS));
+        titleLine.setAlignmentX(Component.LEFT_ALIGNMENT);
+        titleLine.add(conversationTitleLabel);
+        titleLine.add(Box.createHorizontalStrut(SPACE_SM));
+        titleLine.add(conversationStateLabel);
+        textBlock.add(titleLine);
         textBlock.add(Box.createVerticalStrut(SPACE_XS));
         textBlock.add(conversationSubtitleLabel);
         identity.add(textBlock);
-        header.add(identity, BorderLayout.WEST);
+        header.add(identity, BorderLayout.CENTER);
         buttonVideo = createButton("视频", false);
         buttonVideo.setFont(UI_FONT_BOLD);
         buttonVideo.setPreferredSize(new Dimension(58, BUTTON_HEIGHT));
@@ -599,7 +625,6 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         buttonHeaderMore.addActionListener(this);
         JPanel headerActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, SPACE_SM, 0));
         headerActions.setOpaque(false);
-        headerActions.add(conversationStateLabel);
         headerActions.add(buttonVideo);
         headerActions.add(buttonHeaderMore);
         header.add(headerActions, BorderLayout.EAST);
@@ -702,7 +727,13 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         actionRow.setOpaque(false);
         composerHintLabel = createHintLabel("选择会话后开始聊天");
         actionRow.add(composerHintLabel, BorderLayout.WEST);
-        actionRow.add(buttonSend, BorderLayout.EAST);
+        composerCountLabel = createHintLabel("0/" + MESSAGE_TEXT_LIMIT);
+        composerCountLabel.setHorizontalAlignment(SwingConstants.RIGHT);
+        JPanel sendPack = new JPanel(new FlowLayout(FlowLayout.RIGHT, SPACE_SM, 0));
+        sendPack.setOpaque(false);
+        sendPack.add(composerCountLabel);
+        sendPack.add(buttonSend);
+        actionRow.add(sendPack, BorderLayout.EAST);
 
         composer.add(toolbar, BorderLayout.NORTH);
         composer.add(messageScroll, BorderLayout.CENTER);
@@ -774,6 +805,15 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         label.setFont(UI_FONT_SMALL);
         label.setForeground(MUTED);
         return label;
+    }
+
+    private JPanel createStackedBlock(String label, JComponent input) {
+        JPanel panel = new JPanel(new BorderLayout(0, SPACE_SM));
+        panel.setOpaque(false);
+        JLabel textLabel = createSectionTitle(label);
+        panel.add(textLabel, BorderLayout.NORTH);
+        panel.add(input, BorderLayout.CENTER);
+        return panel;
     }
 
     private BubblePanel createCardPanel(int padding) {
@@ -1050,6 +1090,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         initLogFile(login.username);
         loadHistoryPreview();
         loadPendingPrivateMessages();
+        loadPendingDeliveries();
     }
 
     private static Path clientDataRoot() {
@@ -1439,22 +1480,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
         if(incomingFriendRequests.contains(sender)) return;
         incomingFriendRequests.add(sender);
-        addMsg("<font color=\"#3366cc\">收到 " + escapeHtml(sender) + " 的好友申请。</font>");
-
-        int choice = JOptionPane.showConfirmDialog(this,
-                sender + " 请求添加你为好友，是否同意？",
-                "好友申请",
-                JOptionPane.YES_NO_OPTION,
-                JOptionPane.QUESTION_MESSAGE);
-        if(choice == JOptionPane.YES_OPTION) {
-            addFriend(sender);
-            sendFriendResponse(sender, true);
-            addMsg("<font color=\"#008000\">已同意 " + escapeHtml(sender) + " 的好友申请。</font>");
-        } else {
-            incomingFriendRequests.remove(sender);
-            sendFriendResponse(sender, false);
-            addMsg("<font color=\"#666666\">已拒绝 " + escapeHtml(sender) + " 的好友申请。</font>");
-        }
+        showFriendRequestCard(sender);
     }
 
     private void sendFriendResponse(String target, boolean accepted) {
@@ -1462,6 +1488,68 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             ck.sendMessage("/msg " + target + " "
                     + (accepted ? FRIEND_ACCEPT_PREFIX : FRIEND_REJECT_PREFIX) + ownNick());
         }
+    }
+
+    private void showFriendRequestCard(final String sender) {
+        if(historyWindow == null) {
+            addMsg("<font color=\"#3366cc\">收到 " + escapeHtml(sender) + " 的好友申请。</font>");
+            return;
+        }
+        final BubblePanel card = new BubblePanel(SURFACE, BORDER_LIGHT, RADIUS_LG);
+        card.setLayout(new BorderLayout(SPACE_MD, 0));
+        card.setBorder(pad(SPACE_MD));
+        card.setMaximumSize(new Dimension(520, 92));
+
+        AvatarView avatar = new AvatarView(sender, false);
+        JPanel textPanel = new JPanel();
+        textPanel.setOpaque(false);
+        textPanel.setLayout(new BoxLayout(textPanel, BoxLayout.Y_AXIS));
+        JLabel title = new JLabel(sender + " 请求添加你为好友");
+        title.setFont(UI_FONT_BOLD);
+        title.setForeground(TEXT);
+        JLabel detail = new JLabel("同意后可在私聊中发送文字、文件、语音和视频通话。");
+        detail.setFont(UI_FONT_SMALL);
+        detail.setForeground(MUTED);
+        textPanel.add(title);
+        textPanel.add(Box.createVerticalStrut(SPACE_XS));
+        textPanel.add(detail);
+
+        final JButton reject = createButton("拒绝", false);
+        final JButton accept = createButton("同意", true);
+        reject.setPreferredSize(new Dimension(68, 34));
+        accept.setPreferredSize(new Dimension(68, 34));
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, SPACE_SM, 0));
+        actions.setOpaque(false);
+        actions.add(reject);
+        actions.add(accept);
+
+        ActionListener finish = new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                boolean accepted = e.getSource() == accept;
+                accept.setEnabled(false);
+                reject.setEnabled(false);
+                incomingFriendRequests.remove(sender);
+                if(accepted) {
+                    addFriend(sender);
+                    sendFriendResponse(sender, true);
+                    detail.setText("已同意，" + sender + " 已加入好友列表。");
+                    detail.setForeground(SUCCESS);
+                } else {
+                    sendFriendResponse(sender, false);
+                    detail.setText("已拒绝该好友申请。");
+                    detail.setForeground(MUTED);
+                }
+                card.revalidate();
+                card.repaint();
+            }
+        };
+        reject.addActionListener(finish);
+        accept.addActionListener(finish);
+
+        card.add(avatar, BorderLayout.WEST);
+        card.add(textPanel, BorderLayout.CENTER);
+        card.add(actions, BorderLayout.EAST);
+        historyWindow.addInlineComponent(card);
     }
 
     private String ownNick() {
@@ -1488,19 +1576,22 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                             + "，本地端口 " + ck.getLocalPort());
                 }
                 setTitle(appName + " - " + txtNick.getText());
-                addMsg("<font color=\"#008000\">connected! Local Port:" + ck.getLocalPort() + "</font>");
+                addMsg("<font color=\"#008000\">已连接到聊天服务器。</font>");
+                appendLog("[connection] connected to " + host + ":" + port
+                        + ", local port " + ck.getLocalPort());
                 refreshUsers();
                 uploadOwnMomentsToServer();
             } else {
                 String detail = ck.getLastErrorMessage();
                 setConnectionStatus("连接失败，请检查服务端、防火墙和端口", DANGER);
-                addMsg("<font color=\"#ff0000\">连接失败："
-                        + escapeHtml(detail.length() == 0 ? "请确认服务端已启动、IP 和端口正确。" : detail)
-                        + "</font>");
+                showInlineNotice("连接失败：服务端未启动、IP/端口错误或防火墙未放行。", DANGER);
+                appendLog("[connection failed] "
+                        + (detail.length() == 0 ? "server not reachable" : detail));
             }
         } catch(Exception e) {
             setConnectionStatus("连接错误：" + e.getMessage(), DANGER);
-            addMsg("<font color=\"#ff0000\">连接错误：" + escapeHtml(e.getMessage()) + "</font>");
+            showInlineNotice("连接错误：" + e.getMessage(), DANGER);
+            appendLog("[connection error] " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -1528,6 +1619,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         if(conversationStateLabel == null) return;
         conversationStateLabel.setText(text);
         conversationStateLabel.setForeground(foreground);
+        conversationStateLabel.setVisible(!"广播".equals(text) && !"群聊".equals(text));
         conversationStateLabel.setBorder(new CompoundBorder(
                 new RoundedBorder(border, RADIUS_XL),
                 pad(4, 10, 4, 10)));
@@ -1611,9 +1703,19 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                 && visibleUsers.contains(selectedChatTarget);
         if(buttonVideo != null) {
             buttonVideo.setEnabled(canCall);
+            buttonVideo.setVisible(canCall);
+            buttonVideo.setText(canCall ? "视频" : "");
+            buttonVideo.setPreferredSize(canCall
+                    ? new Dimension(58, BUTTON_HEIGHT)
+                    : new Dimension(0, BUTTON_HEIGHT));
             buttonVideo.setToolTipText(canCall
                     ? "和 " + selectedChatTarget + " 视频通话"
                     : "请选择在线好友后发起视频通话");
+            Container parent = buttonVideo.getParent();
+            if(parent != null) {
+                parent.revalidate();
+                parent.repaint();
+            }
         }
         updateAttachmentToolState(canCall);
     }
@@ -1804,26 +1906,30 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         boolean hasText = toSend != null && toSend.trim().length() > 0;
         boolean hasFile = pendingFile != null;
         if(!hasText && !hasFile) return;
+        if(toSend != null && toSend.length() > MESSAGE_TEXT_LIMIT) {
+            showInlineNotice("消息过长，请删减到 " + MESSAGE_TEXT_LIMIT + " 字以内。", DANGER);
+            return;
+        }
         if(ck == null || !ck.isConnected()) {
-            addMsg("<font color=\"#ff0000\">请先连接服务器。</font>");
+            showInlineNotice("请先连接服务器。", DANGER);
             return;
         }
         if(onlineList != null && onlineList.getSelectedValue() == null) {
-            addMsg("<font color=\"#ff0000\">请先选择一个会话。</font>");
+            showInlineNotice("请先选择一个会话。", DANGER);
             return;
         }
         if(hasFile) {
             String target = getSelectedPrivateTarget();
             if(target == null || target.length() == 0) {
-                addMsg("<font color=\"#ff0000\">请选择一个联系人后再发送附件。</font>");
+                showInlineNotice("请选择一个在线联系人后再发送附件。", DANGER);
                 return;
             }
             if(!visibleUsers.contains(target)) {
-                addMsg("<font color=\"#ff0000\">对方当前离线，附件暂不能离线发送，请先发送文字消息或等待对方上线。</font>");
+                showInlineNotice("对方离线，附件暂不能离线发送。", WARNING);
                 return;
             }
             if(hasText && toSend.startsWith("/")) {
-                addMsg("<font color=\"#ff0000\">附件待发送时不能同时输入命令，请先取消附件或单独发送命令。</font>");
+                showInlineNotice("附件待发送时不能同时输入命令。", DANGER);
                 return;
             }
             if(hasText) sendPrivate(target, toSend);
@@ -2062,6 +2168,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         sentFriendRequests.clear();
         incomingFriendRequests.clear();
         pendingPrivateMessages.clear();
+        pendingDeliveries.clear();
         currentProfile = new Properties();
         try {
             if(currentUserDir == null) return;
@@ -2165,6 +2272,73 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         if(sent.size() > 0) savePendingPrivateMessages();
     }
 
+    private void queuePendingDelivery(String target, String body, String note) {
+        if(target == null || target.length() == 0 || body == null || body.length() == 0) return;
+        String id = UUID.randomUUID().toString();
+        PendingDelivery pending = new PendingDelivery(id, target, body,
+                note == null ? "" : note, LocalDateTime.now().format(displayTime));
+        pendingDeliveries.put(id, pending);
+        savePendingDeliveries();
+    }
+
+    private void loadPendingDeliveries() {
+        if(currentUserDir == null) return;
+        Path file = currentUserDir.resolve(PENDING_DELIVERIES_FILE);
+        if(!Files.exists(file)) return;
+        try {
+            java.util.List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+            for(int i=0;i<lines.size();i++) {
+                String[] parts = lines.get(i).split("\\t", 5);
+                if(parts.length != 5) continue;
+                String id = parts[0];
+                String target = decodeToken(parts[1]);
+                String time = decodeToken(parts[2]);
+                String note = decodeToken(parts[3]);
+                String body = decodeToken(parts[4]);
+                if(id.length() == 0 || target.length() == 0 || body.length() == 0) continue;
+                pendingDeliveries.put(id, new PendingDelivery(id, target, body, note, time));
+            }
+        } catch(Exception e) {
+            addMsg("<font color=\"#ff0000\">加载离线投递队列失败：" + escapeHtml(e.getMessage()) + "</font>");
+        }
+    }
+
+    private void savePendingDeliveries() {
+        if(currentUserDir == null) return;
+        try {
+            Files.createDirectories(currentUserDir);
+            java.util.List<String> lines = new ArrayList<String>();
+            Iterator<PendingDelivery> it = pendingDeliveries.values().iterator();
+            while(it.hasNext()) {
+                PendingDelivery pending = it.next();
+                lines.add(pending.id + "\t" + encodeToken(pending.target) + "\t"
+                        + encodeToken(pending.time) + "\t" + encodeToken(pending.note)
+                        + "\t" + encodeToken(pending.body));
+            }
+            Files.write(currentUserDir.resolve(PENDING_DELIVERIES_FILE), lines, StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+        } catch(Exception e) {
+            addMsg("<font color=\"#ff0000\">保存离线投递队列失败：" + escapeHtml(e.getMessage()) + "</font>");
+        }
+    }
+
+    private void flushPendingDeliveries(Set<String> onlineUsers) {
+        if(ck == null || !ck.isConnected() || pendingDeliveries.size() == 0) return;
+        java.util.List<String> sent = new ArrayList<String>();
+        Iterator<PendingDelivery> it = pendingDeliveries.values().iterator();
+        while(it.hasNext()) {
+            PendingDelivery pending = it.next();
+            if(!onlineUsers.contains(pending.target)) continue;
+            ck.sendMessage("/msg " + pending.target + " " + pending.body);
+            sent.add(pending.id);
+            appendLog("[offline delivery to " + pending.target + "] " + pending.note);
+        }
+        for(int i=0;i<sent.size();i++) {
+            pendingDeliveries.remove(sent.get(i));
+        }
+        if(sent.size() > 0) savePendingDeliveries();
+    }
+
     private void saveFriends() {
         try {
             if(currentUserDir == null) return;
@@ -2200,57 +2374,130 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         Iterator<String> friendIt = friends.iterator();
         while(friendIt.hasNext()) {
             String friend = friendIt.next();
-            if(visibleUsers.contains(friend)) candidates.add(friend);
+            candidates.add(friend);
         }
         if(candidates.size() < 2) {
-            addMsg("<font color=\"#ff0000\">至少需要 2 个在线好友才能创建群聊。</font>");
+            showInlineNotice("至少需要 2 个好友才能创建群聊。", WARNING);
             return;
         }
         Collections.sort(candidates, String.CASE_INSENSITIVE_ORDER);
+
+        final JDialog dialog = new JDialog(this, "创建群聊", true);
+        dialog.setDefaultCloseOperation(DISPOSE_ON_CLOSE);
+        dialog.setSize(430, 520);
+        dialog.setMinimumSize(new Dimension(390, 460));
+        dialog.setLocationRelativeTo(this);
+
+        JPanel root = new JPanel(new BorderLayout());
+        root.setBackground(APP_BACKGROUND);
+        root.setBorder(pad(SPACE_XL));
+        BubblePanel card = new BubblePanel(SURFACE, BORDER_LIGHT, RADIUS_XL);
+        card.setLayout(new BorderLayout(0, SPACE_MD));
+        card.setBorder(pad(SPACE_LG));
+
+        JPanel header = new JPanel();
+        header.setOpaque(false);
+        header.setLayout(new BoxLayout(header, BoxLayout.Y_AXIS));
+        JLabel title = new JLabel("创建群聊");
+        title.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 22));
+        title.setForeground(TEXT);
+        JLabel detail = new JLabel("选择至少 2 位好友，离线成员上线后会收到群聊邀请。");
+        detail.setFont(UI_FONT_SMALL);
+        detail.setForeground(MUTED);
+        header.add(title);
+        header.add(Box.createVerticalStrut(SPACE_XS));
+        header.add(detail);
+
+        final JTextField groupNameField = createTextField("", 18);
+        JPanel nameBlock = createStackedBlock("群名称", groupNameField);
+
         final JList<String> friendList = new JList<String>(new Vector<String>(candidates));
         friendList.setFont(UI_FONT);
-        friendList.setVisibleRowCount(Math.min(8, Math.max(4, candidates.size())));
         friendList.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
+        friendList.setVisibleRowCount(Math.min(9, Math.max(5, candidates.size())));
+        final JLabel selectionLabel = createHintLabel("已选择 0 人");
+        JScrollPane friendScroll = createModernScrollPane(friendList, Color.WHITE);
+        friendScroll.setPreferredSize(new Dimension(0, 210));
+        JPanel memberBlock = new JPanel(new BorderLayout(0, SPACE_SM));
+        memberBlock.setOpaque(false);
+        JLabel memberTitle = createSectionTitle("好友");
+        memberBlock.add(memberTitle, BorderLayout.NORTH);
+        memberBlock.add(friendScroll, BorderLayout.CENTER);
+        memberBlock.add(selectionLabel, BorderLayout.SOUTH);
 
-        JTextField groupNameField = createTextField("", 18);
-        JPanel panel = new JPanel(new BorderLayout(8, 8));
-        JPanel rows = new JPanel(new GridBagLayout());
-        GridBagConstraints gbc = new GridBagConstraints();
-        gbc.insets = new Insets(5, 5, 5, 5);
-        gbc.anchor = GridBagConstraints.WEST;
-        gbc.fill = GridBagConstraints.HORIZONTAL;
-        addLoginRow(rows, gbc, 0, "群名称", groupNameField);
-        panel.add(rows, BorderLayout.NORTH);
-        panel.add(new JLabel("选择要拉入群聊的在线好友（至少 2 个）："), BorderLayout.CENTER);
-        panel.add(new JScrollPane(friendList), BorderLayout.SOUTH);
+        final JLabel status = createHintLabel(" ");
+        status.setForeground(DANGER);
+        final JButton cancel = createButton("取消", false);
+        final JButton create = createButton("创建", true);
+        cancel.setPreferredSize(new Dimension(76, 38));
+        create.setPreferredSize(new Dimension(88, 38));
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, SPACE_SM, 0));
+        buttons.setOpaque(false);
+        buttons.add(cancel);
+        buttons.add(create);
 
-        int option = JOptionPane.showConfirmDialog(this, panel, "创建群聊",
-                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
-        if(option != JOptionPane.OK_OPTION) return;
+        JPanel center = new JPanel();
+        center.setOpaque(false);
+        center.setLayout(new BoxLayout(center, BoxLayout.Y_AXIS));
+        center.add(nameBlock);
+        center.add(Box.createVerticalStrut(SPACE_MD));
+        center.add(memberBlock);
+        center.add(Box.createVerticalStrut(SPACE_SM));
+        center.add(status);
 
-        String groupName = groupNameField.getText().trim();
-        java.util.List<String> selectedFriends = friendList.getSelectedValuesList();
-        if(groupName.length() == 0) {
-            JOptionPane.showMessageDialog(this, "群名称不能为空。");
-            return;
-        }
-        if(groupName.equals(BROADCAST_CHAT) || groupName.startsWith(GROUP_LABEL_PREFIX)
-                || groupName.indexOf('|') >= 0 || groupName.indexOf('\t') >= 0) {
-            JOptionPane.showMessageDialog(this, "群名称不能使用系统保留名称或特殊字符。");
-            return;
-        }
-        if(selectedFriends.size() < 2) {
-            JOptionPane.showMessageDialog(this, "请至少选择 2 个好友。");
-            return;
-        }
-        Set<String> members = new LinkedHashSet<String>();
-        members.add(ownNick());
-        members.addAll(selectedFriends);
-        addOrUpdateGroup(groupName, members, true);
-        sendGroupInvite(groupName, members);
-        rebuildConversationList(groupLabel(groupName));
-        addMsg("<font color=\"#3366cc\">已创建群聊：" + escapeHtml(groupName)
-                + "，成员 " + members.size() + " 人。</font>");
+        card.add(header, BorderLayout.NORTH);
+        card.add(center, BorderLayout.CENTER);
+        card.add(buttons, BorderLayout.SOUTH);
+        root.add(card, BorderLayout.CENTER);
+        dialog.setContentPane(root);
+
+        friendList.addListSelectionListener(new javax.swing.event.ListSelectionListener() {
+            public void valueChanged(javax.swing.event.ListSelectionEvent e) {
+                int count = friendList.getSelectedValuesList().size();
+                selectionLabel.setText("已选择 " + count + " 人");
+                selectionLabel.setForeground(count >= 2 ? PRIMARY_DARK : MUTED);
+            }
+        });
+        cancel.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                dialog.dispose();
+            }
+        });
+        create.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                String groupName = groupNameField.getText().trim();
+                java.util.List<String> selectedFriends = friendList.getSelectedValuesList();
+                if(groupName.length() == 0) {
+                    status.setText("请输入群名称。");
+                    return;
+                }
+                if(groupName.equals(BROADCAST_CHAT) || groupName.startsWith(GROUP_LABEL_PREFIX)
+                        || groupName.indexOf('|') >= 0 || groupName.indexOf('\t') >= 0) {
+                    status.setText("群名称不能使用系统保留名称或特殊字符。");
+                    return;
+                }
+                if(selectedFriends.size() < 2) {
+                    status.setText("请至少选择 2 个好友。");
+                    return;
+                }
+                Set<String> members = new LinkedHashSet<String>();
+                members.add(ownNick());
+                members.addAll(selectedFriends);
+                addOrUpdateGroup(groupName, members, true);
+                sendGroupInvite(groupName, members);
+                rebuildConversationList(groupLabel(groupName));
+                addMsg("<font color=\"#3366cc\">已创建群聊：" + escapeHtml(groupName)
+                        + "，成员 " + members.size() + " 人。</font>");
+                dialog.dispose();
+            }
+        });
+        dialog.getRootPane().setDefaultButton(create);
+        dialog.getRootPane().registerKeyboardAction(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                dialog.dispose();
+            }
+        }, KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), JComponent.WHEN_IN_FOCUSED_WINDOW);
+        dialog.setVisible(true);
     }
 
     private void addOrUpdateGroup(String groupName, Set<String> members, boolean save) {
@@ -2266,17 +2513,20 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     }
 
     private void sendGroupInvite(String groupName, Set<String> members) {
-        if(ck == null || !ck.isConnected()) {
-            addMsg("<font color=\"#ff0000\">当前未连接服务器，群聊已保存，本次无法发送邀请。</font>");
-            return;
-        }
         String payload = GROUP_INVITE_PREFIX + encodeToken(groupName) + "|"
                 + encodeToken(membersToCsv(members));
         Iterator<String> it = members.iterator();
         while(it.hasNext()) {
             String member = it.next();
             if(member.equalsIgnoreCase(ownNick())) continue;
-            ck.sendMessage("/msg " + member + " " + payload);
+            if(ck != null && ck.isConnected() && visibleUsers.contains(member)) {
+                ck.sendMessage("/msg " + member + " " + payload);
+            } else {
+                queuePendingDelivery(member, payload, "群聊邀请：" + groupName);
+            }
+        }
+        if(ck == null || !ck.isConnected()) {
+            showInlineNotice("群聊已创建，邀请会在连接服务器后自动发送。", WARNING);
         }
     }
 
@@ -2723,29 +2973,29 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
     private String requireOnlinePrivateTarget(String action) {
         if(ck == null || !ck.isConnected()) {
-            addMsg("<font color=\"#ff0000\">请先连接服务器后再" + action + "。</font>");
+            showInlineNotice("请先连接服务器后再" + action + "。", DANGER);
             return null;
         }
         String selected = onlineList == null ? null : onlineList.getSelectedValue();
         if(selected == null) {
-            addMsg("<font color=\"#ff0000\">请先从左侧选择一个在线好友。</font>");
+            showInlineNotice("请先从左侧选择一个在线好友。", DANGER);
             return null;
         }
         if(isBroadcastConversation(selected)) {
-            addMsg("<font color=\"#ff0000\">广播暂不支持" + action + "，请选择一个在线好友私聊。</font>");
+            showInlineNotice("广播暂不支持" + action + "，请选择在线好友。", WARNING);
             return null;
         }
         if(isGroupConversation(selected)) {
-            addMsg("<font color=\"#ff0000\">群聊暂不支持" + action + "，请选择一个在线好友私聊。</font>");
+            showInlineNotice("群聊暂不支持" + action + "，请选择在线好友。", WARNING);
             return null;
         }
         String target = getSelectedPrivateTarget();
         if(target == null || target.length() == 0) {
-            addMsg("<font color=\"#ff0000\">请选择一个在线好友后再" + action + "。</font>");
+            showInlineNotice("请选择一个在线好友后再" + action + "。", DANGER);
             return null;
         }
         if(!visibleUsers.contains(target)) {
-            addMsg("<font color=\"#ff0000\">对方当前离线，暂不能" + action + "。</font>");
+            showInlineNotice("对方当前离线，暂不能" + action + "。", WARNING);
             return null;
         }
         return target;
@@ -2754,11 +3004,11 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private boolean validateAttachmentType(File file, String requiredType) {
         if(requiredType == null) return true;
         if("图片".equals(requiredType) && !hasExtension(file.getName(), IMAGE_EXTENSIONS)) {
-            addMsg("<font color=\"#ff0000\">请选择图片文件：png、jpg、jpeg、gif、bmp 或 webp。</font>");
+            showInlineNotice("请选择图片文件：png、jpg、jpeg、gif、bmp 或 webp。", DANGER);
             return false;
         }
         if("语音".equals(requiredType) && !hasExtension(file.getName(), AUDIO_EXTENSIONS)) {
-            addMsg("<font color=\"#ff0000\">请选择语音文件：mp3、wav、aac、flac、m4a、ogg、wma、amr 或 opus。</font>");
+            showInlineNotice("请选择语音文件：mp3、wav、aac、flac、m4a、ogg、wma、amr 或 opus。", DANGER);
             return false;
         }
         return true;
@@ -2767,11 +3017,11 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private boolean validateAttachment(File file) {
         if(file == null) return false;
         if(!file.exists() || !file.isFile()) {
-            addMsg("<font color=\"#ff0000\">没有找到文件：" + escapeHtml(file.getPath()) + "</font>");
+            showInlineNotice("没有找到文件：" + file.getName(), DANGER);
             return false;
         }
         if(file.length() > MAX_FILE_BYTES) {
-            addMsg("<font color=\"#ff0000\">文件超过 " + displayFileSize(MAX_FILE_BYTES) + " 限制。</font>");
+            showInlineNotice("文件超过 " + displayFileSize(MAX_FILE_BYTES) + " 限制。", DANGER);
             return false;
         }
         return true;
@@ -2799,26 +3049,34 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
     private void updateSendButtonState() {
         if(buttonSend == null || msgWindow == null) return;
-        boolean hasText = msgWindow.getText() != null && msgWindow.getText().trim().length() > 0;
+        String text = msgWindow.getText() == null ? "" : msgWindow.getText();
+        int textLength = text.length();
+        boolean hasText = text.trim().length() > 0;
         boolean hasFile = pendingFile != null;
         boolean hasConversation = onlineList != null && onlineList.getSelectedValue() != null;
         boolean connected = ck != null && ck.isConnected();
+        boolean textWithinLimit = textLength <= MESSAGE_TEXT_LIMIT;
         boolean attachmentTargetReady = !hasFile
                 || (selectedChatTarget != null && visibleUsers.contains(selectedChatTarget));
-        boolean ready = connected && hasConversation && (hasText || hasFile) && attachmentTargetReady;
+        boolean ready = connected && hasConversation && (hasText || hasFile)
+                && attachmentTargetReady && textWithinLimit;
         buttonSend.setEnabled(ready);
+        updateComposerCount(textLength, textWithinLimit);
         if(buttonSend != null) {
             if(ready) buttonSend.setToolTipText("发送到当前会话");
             else if(!connected) buttonSend.setToolTipText("请先连接服务器");
             else if(!hasConversation) buttonSend.setToolTipText("请先选择会话");
             else if(hasFile && !attachmentTargetReady) buttonSend.setToolTipText("附件只能发送给在线联系人");
+            else if(!textWithinLimit) buttonSend.setToolTipText("消息过长，请删减后发送");
             else buttonSend.setToolTipText("输入内容后发送");
         }
-        updateComposerHint(connected, hasConversation, hasText, hasFile, attachmentTargetReady);
+        updateComposerHint(connected, hasConversation, hasText, hasFile,
+                attachmentTargetReady, textWithinLimit);
     }
 
     private void updateComposerHint(boolean connected, boolean hasConversation,
-            boolean hasText, boolean hasFile, boolean attachmentTargetReady) {
+            boolean hasText, boolean hasFile, boolean attachmentTargetReady,
+            boolean textWithinLimit) {
         if(composerHintLabel == null) return;
         if(!connected) {
             composerHintLabel.setText("未连接服务器");
@@ -2829,6 +3087,9 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         } else if(hasFile && !attachmentTargetReady) {
             composerHintLabel.setText("附件需要发送给在线联系人");
             composerHintLabel.setForeground(WARNING);
+        } else if(!textWithinLimit) {
+            composerHintLabel.setText("消息过长，请删减到 " + MESSAGE_TEXT_LIMIT + " 字以内");
+            composerHintLabel.setForeground(DANGER);
         } else if(hasText || hasFile) {
             composerHintLabel.setText("准备发送到当前会话");
             composerHintLabel.setForeground(PRIMARY_DARK);
@@ -2842,6 +3103,20 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             composerHintLabel.setText("广播消息");
             composerHintLabel.setForeground(MUTED);
         }
+    }
+
+    private void updateComposerCount(int textLength, boolean textWithinLimit) {
+        if(composerCountLabel == null) return;
+        composerCountLabel.setText(textLength + "/" + MESSAGE_TEXT_LIMIT);
+        composerCountLabel.setForeground(textWithinLimit ? MUTED : DANGER);
+    }
+
+    private void showInlineNotice(String text, Color color) {
+        if(composerHintLabel != null) {
+            composerHintLabel.setText(text);
+            composerHintLabel.setForeground(color == null ? MUTED : color);
+        }
+        Toolkit.getDefaultToolkit().beep();
     }
 
     private void clearAttachment() {
@@ -2962,6 +3237,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         String payload = GROUP_MESSAGE_PREFIX + encodeToken(groupName) + "|"
                 + encodeToken(message);
         int sentCount = 0;
+        int queuedCount = 0;
         java.util.List<String> offline = new ArrayList<String>();
         Iterator<String> it = members.iterator();
         while(it.hasNext()) {
@@ -2969,21 +3245,25 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             if(member.equalsIgnoreCase(ownNick())) continue;
             if(!visibleUsers.contains(member)) {
                 offline.add(member);
+                queuePendingDelivery(member, payload, "群聊 " + groupName + " 消息");
+                queuedCount++;
                 continue;
             }
             ck.sendMessage("/msg " + member + " " + payload);
             sentCount++;
         }
-        if(sentCount == 0) {
-            addMsg("<font color=\"#ff0000\">群成员当前都不在线，消息未发送。</font>");
-            return false;
+        ChatMessage chatMessage = withConversation(new ChatMessage(MessageKind.OUTGOING,
+                ownNick() + " / " + groupName, message, LocalDateTime.now().format(displayTime)), groupLabel(groupName));
+        if(queuedCount > 0) {
+            chatMessage.deliveryStatus = sentCount > 0 ? "部分待发送" : "待发送";
+        } else {
+            chatMessage.deliveryStatus = "已发送";
         }
-        historyWindow.addMessage(withConversation(new ChatMessage(MessageKind.OUTGOING,
-                ownNick() + " / " + groupName, message, LocalDateTime.now().format(displayTime)), groupLabel(groupName)));
-        appendLog("[group " + groupName + " to " + sentCount + " members] " + message);
+        historyWindow.addMessage(chatMessage);
+        appendLog("[group " + groupName + " to " + sentCount
+                + " online, queued " + queuedCount + "] " + message);
         if(offline.size() > 0) {
-            addMsg("<font color=\"#666666\">群聊 " + escapeHtml(groupName)
-                    + " 中 " + offline.size() + " 名成员离线，已跳过。</font>");
+            showInlineNotice("群聊中 " + offline.size() + " 名成员离线，消息已加入待发送。", WARNING);
         }
         return true;
     }
@@ -3167,6 +3447,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
         visibleUsers = nextUsers;
         flushPendingPrivateMessages(nextUsers);
+        flushPendingDeliveries(nextUsers);
         flushPendingReadReceipts(nextUsers);
         rebuildConversationList(previousSelection);
         updateVideoButtonState();
@@ -4076,6 +4357,16 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
             setContentPane(createLoginContent());
             getRootPane().setDefaultButton(primaryButton);
+            getRootPane().registerKeyboardAction(new ActionListener() {
+                public void actionPerformed(ActionEvent e) {
+                    loginData = null;
+                    dispose();
+                }
+            }, KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), JComponent.WHEN_IN_FOCUSED_WINDOW);
+            loginUserField.setNextFocusableComponent(loginPasswordField);
+            loginPasswordField.setNextFocusableComponent(primaryButton);
+            registerUserField.setNextFocusableComponent(registerPasswordField);
+            registerPasswordField.setNextFocusableComponent(primaryButton);
         }
 
         LoginData getLoginData() {
@@ -4149,9 +4440,9 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             advancedPanel = createAdvancedPanel();
             advancedPanel.setVisible(false);
 
-            statusLabel = new JLabel(" ");
+            statusLabel = new JLabel("默认连接本机服务器，跨电脑时再打开高级设置。");
             statusLabel.setFont(UI_FONT_SMALL);
-            statusLabel.setForeground(DANGER);
+            statusLabel.setForeground(MUTED);
 
             center.add(modeTabs);
             center.add(Box.createVerticalStrut(SPACE_MD));
@@ -4310,8 +4601,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
 
         private void clearStatus() {
-            statusLabel.setForeground(DANGER);
-            statusLabel.setText(" ");
+            statusLabel.setForeground(MUTED);
+            statusLabel.setText("默认连接本机服务器，跨电脑时再打开高级设置。");
         }
 
         private void showError(String text) {
@@ -5206,15 +5497,15 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
         RailButton(String text) {
             super(text);
-            setFont(new Font("Microsoft YaHei UI", Font.BOLD, 14));
+            setFont(new Font("Microsoft YaHei UI", Font.BOLD, 12));
             setForeground(new Color(74, 80, 92));
             setFocusPainted(false);
             setOpaque(false);
             setContentAreaFilled(false);
             setBorder(pad(0));
-            setPreferredSize(new Dimension(40, 40));
-            setMinimumSize(new Dimension(40, 40));
-            setMaximumSize(new Dimension(40, 40));
+            setPreferredSize(new Dimension(58, 42));
+            setMinimumSize(new Dimension(58, 42));
+            setMaximumSize(new Dimension(58, 42));
             setAlignmentX(Component.CENTER_ALIGNMENT);
             setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             addMouseListener(new MouseAdapter() {
@@ -5688,6 +5979,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         private JLabel nameLabel = new JLabel();
         private JLabel previewLabel = new JLabel();
         private JLabel timeLabel = new JLabel();
+        private JLabel categoryLabel = new JLabel();
         private JLabel stateDot = new JLabel("●");
         private BadgeLabel unreadBadge = new BadgeLabel();
         private JPanel textPanel = new JPanel();
@@ -5704,6 +5996,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             nameLabel.setFont(UI_FONT_BOLD);
             previewLabel.setFont(CHAT_TEXT_SMALL_FONT);
             timeLabel.setFont(new Font("Microsoft YaHei UI", Font.PLAIN, 11));
+            categoryLabel.setFont(new Font("Microsoft YaHei UI", Font.PLAIN, 11));
+            categoryLabel.setBorder(pad(1, 7, 1, 7));
             stateDot.setFont(new Font("Dialog", Font.BOLD, 9));
             stateDot.setBorder(pad(0, 0, 0, 5));
 
@@ -5713,9 +6007,14 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             namePack.add(stateDot);
             namePack.add(nameLabel);
 
+            JPanel metaPack = new JPanel(new FlowLayout(FlowLayout.RIGHT, SPACE_XS, 0));
+            metaPack.setOpaque(false);
+            metaPack.add(categoryLabel);
+            metaPack.add(timeLabel);
+
             titleRow.setOpaque(false);
             titleRow.add(namePack, BorderLayout.CENTER);
-            titleRow.add(timeLabel, BorderLayout.EAST);
+            titleRow.add(metaPack, BorderLayout.EAST);
             previewRow.setOpaque(false);
             previewRow.add(previewLabel, BorderLayout.CENTER);
             previewRow.add(unreadBadge, BorderLayout.EAST);
@@ -5737,6 +6036,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                     ? meta.preview
                     : fallbackConversationDetail(name));
             timeLabel.setText(meta == null ? "" : meta.time);
+            categoryLabel.setText(conversationCategoryText(name));
+            categoryLabel.setForeground(conversationStateColor(name));
             unreadBadge.setCount(meta == null ? 0 : meta.unread);
             stateDot.setForeground(conversationStateColor(name));
             selectedRow = isSelected;
@@ -5756,6 +6057,14 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             }
             setOpaque(false);
             return this;
+        }
+
+        private String conversationCategoryText(String name) {
+            if(BROADCAST_CHAT.equals(name)) return "广播";
+            if(isGroupConversation(name)) return "群聊";
+            if(sentFriendRequests.contains(name)) return "待验证";
+            if(friends.contains(name)) return visibleUsers.contains(name) ? "好友" : "离线";
+            return visibleUsers.contains(name) ? "在线" : "离线";
         }
 
         private String displayConversationName(String name) {
@@ -5826,6 +6135,31 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                     : createChatRow(message);
             add(row);
             add(Box.createVerticalStrut(6));
+            revalidate();
+            repaint();
+            SwingUtilities.invokeLater(new Runnable() {
+                public void run() {
+                    JScrollPane pane = (JScrollPane)SwingUtilities.getAncestorOfClass(JScrollPane.class, ClientHistory.this);
+                    if(pane != null) {
+                        JScrollBar bar = pane.getVerticalScrollBar();
+                        bar.setValue(bar.getMaximum());
+                    }
+                }
+            });
+        }
+
+        public void addInlineComponent(Component component) {
+            if(component == null) return;
+            if(showingEmptyState) {
+                removeAll();
+                showingEmptyState = false;
+            }
+            JPanel row = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
+            row.setOpaque(false);
+            row.setAlignmentX(Component.LEFT_ALIGNMENT);
+            row.add(component);
+            add(row);
+            add(Box.createVerticalStrut(8));
             revalidate();
             repaint();
             SwingUtilities.invokeLater(new Runnable() {
@@ -6141,7 +6475,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             card.add(imageLabel, BorderLayout.CENTER);
 
             JLabel meta = new JLabel(displayFileSize(message.fileSize)
-                    + (outgoing ? " · 已发送" : " · 点击下载"));
+                    + (outgoing ? " · 已发送" : " · 点击预览"));
             meta.setFont(UI_FONT_SMALL);
             meta.setForeground(outgoing ? PRIMARY_DARK : MUTED);
             meta.setBorder(pad(6, 2, 0, 2));
@@ -6155,10 +6489,10 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
             if(!outgoing) {
                 card.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-                card.setToolTipText("点击下载图片");
+                card.setToolTipText("点击预览图片");
                 card.addMouseListener(new MouseAdapter() {
                     public void mouseClicked(MouseEvent e) {
-                        saveReceivedFile(message, null);
+                        previewImageMessage(message);
                     }
                 });
             }
@@ -6221,15 +6555,17 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         private String clipFileName(String name) {
             if(name == null) return "";
             if(name.length() <= 18) return name;
-            return name.substring(0, 8) + "..." + name.substring(name.length() - 7);
+            int dot = name.lastIndexOf('.');
+            String suffix = dot > 0 && name.length() - dot <= 8 ? name.substring(dot) : "";
+            int keepTail = suffix.length() > 0 ? suffix.length() : 7;
+            int keepHead = Math.max(6, 17 - keepTail);
+            return name.substring(0, Math.min(keepHead, name.length()))
+                    + "..." + name.substring(Math.max(0, name.length() - keepTail));
         }
 
         private void saveReceivedFile(ChatMessage message, JLabel statusLabel) {
             if(message.savedFile != null) {
-                JOptionPane.showMessageDialog(ChatClient.this,
-                        "文件已保存到：\n" + message.savedFile.getAbsolutePath(),
-                        "文件已保存",
-                        JOptionPane.INFORMATION_MESSAGE);
+                openSavedFile(message.savedFile);
                 return;
             }
             JFileChooser chooser = new JFileChooser();
@@ -6262,6 +6598,75 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                         "保存文件",
                         JOptionPane.ERROR_MESSAGE);
             }
+        }
+
+        private void previewImageMessage(final ChatMessage message) {
+            try {
+                Image image = ImageIO.read(new ByteArrayInputStream(message.fileData));
+                if(image == null) {
+                    saveReceivedFile(message, null);
+                    return;
+                }
+                int width = image.getWidth(null);
+                int height = image.getHeight(null);
+                double scale = Math.min(720.0 / Math.max(1, width), 520.0 / Math.max(1, height));
+                scale = Math.min(1.0, scale);
+                Image scaled = image.getScaledInstance(
+                        Math.max(1, (int)Math.round(width * scale)),
+                        Math.max(1, (int)Math.round(height * scale)),
+                        Image.SCALE_SMOOTH);
+
+                final JDialog dialog = new JDialog(ChatClient.this, "图片预览", true);
+                dialog.setDefaultCloseOperation(DISPOSE_ON_CLOSE);
+                JPanel root = new JPanel(new BorderLayout(SPACE_MD, SPACE_MD));
+                root.setBackground(CHAT_BACKGROUND);
+                root.setBorder(pad(SPACE_LG));
+                JLabel imageLabel = new JLabel(new ImageIcon(scaled));
+                imageLabel.setHorizontalAlignment(SwingConstants.CENTER);
+                root.add(imageLabel, BorderLayout.CENTER);
+                JPanel bottom = new JPanel(new BorderLayout());
+                bottom.setOpaque(false);
+                JLabel info = createHintLabel(clipFileName(message.fileName)
+                        + " · " + displayFileSize(message.fileSize));
+                JButton save = createButton("保存", true);
+                save.setPreferredSize(new Dimension(82, 36));
+                save.addActionListener(new ActionListener() {
+                    public void actionPerformed(ActionEvent e) {
+                        saveReceivedFile(message, null);
+                    }
+                });
+                bottom.add(info, BorderLayout.WEST);
+                bottom.add(save, BorderLayout.EAST);
+                root.add(bottom, BorderLayout.SOUTH);
+                dialog.setContentPane(root);
+                dialog.pack();
+                dialog.setMinimumSize(new Dimension(360, 260));
+                dialog.setLocationRelativeTo(ChatClient.this);
+                dialog.getRootPane().registerKeyboardAction(new ActionListener() {
+                    public void actionPerformed(ActionEvent e) {
+                        dialog.dispose();
+                    }
+                }, KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), JComponent.WHEN_IN_FOCUSED_WINDOW);
+                dialog.setVisible(true);
+            } catch(Exception e) {
+                saveReceivedFile(message, null);
+            }
+        }
+
+        private void openSavedFile(File file) {
+            if(file == null) return;
+            try {
+                if(Desktop.isDesktopSupported()
+                        && Desktop.getDesktop().isSupported(Desktop.Action.OPEN)) {
+                    Desktop.getDesktop().open(file);
+                    return;
+                }
+            } catch(Exception e) {
+            }
+            JOptionPane.showMessageDialog(ChatClient.this,
+                    "文件已保存到：\n" + file.getAbsolutePath(),
+                    "文件已保存",
+                    JOptionPane.INFORMATION_MESSAGE);
         }
 
         public void clear() {

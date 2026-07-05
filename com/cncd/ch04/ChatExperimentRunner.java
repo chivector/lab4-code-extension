@@ -111,7 +111,8 @@ public class ChatExperimentRunner {
     private static ChatClient createClient(String title, int x, int y) {
         ChatClient client = new ChatClient();
         client.setTitle(title);
-        client.setSize(600, 500);
+        client.setSize(920, 640);
+        client.setMinimumSize(new Dimension(920, 600));
         client.setLocation(x, y);
         client.setDefaultCloseOperation(ChatClient.DISPOSE_ON_CLOSE);
         client.setVisible(true);
