@@ -8,6 +8,7 @@ import javax.sound.sampled.*;
 import java.awt.*;
 import java.awt.event.*;
 import java.awt.image.BufferedImage;
+import java.awt.geom.RoundRectangle2D;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -27,8 +28,15 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private static final String FRIEND_REQUEST_PREFIX = "__FRIEND_REQ__|";
     private static final String FRIEND_ACCEPT_PREFIX = "__FRIEND_ACCEPT__|";
     private static final String FRIEND_REJECT_PREFIX = "__FRIEND_REJECT__|";
+    private static final String FRIEND_DELETE_PREFIX = "__FRIEND_DELETE__|";
     private static final String GROUP_INVITE_PREFIX = "__GROUP_INVITE__|";
     private static final String GROUP_MESSAGE_PREFIX = "__GROUP_MSG__|";
+    private static final String GROUP_KICK_PREFIX = "__GROUP_KICK__|";
+    private static final String GROUP_LEAVE_PREFIX = "__GROUP_LEAVE__|";
+    private static final String MESSAGE_RECALL_PREFIX = "__RECALL__|";
+    private static final String GROUP_FILE_PREFIX = "__GROUP_FILE__";
+    private static final String BROADCAST_FILE_PREFIX = "__BROADCAST_FILE__";
+    private static final String PENDING_FILE_PREFIX = "__PENDING_FILE__|";
     private static final String MOMENT_SYNC_REQUEST_PREFIX = "__MOMENT_REQ__|";
     private static final String MOMENT_SYNC_ITEM_PREFIX = "__MOMENT_ITEM__|";
     private static final String MOMENT_DELETE_PREFIX = "__MOMENT_DELETE__|";
@@ -51,10 +59,11 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private static final int CALL_VIDEO_HEIGHT = 180;
     private static final int CALL_VIDEO_INTERVAL_MS = 650;
     private static final int HEALTH_CHECK_INTERVAL_MS = 2500;
-    private static final int USER_REFRESH_INTERVAL_MS = 6000;
+    private static final int USER_REFRESH_INTERVAL_MS = 30000;
     private static final String ACCOUNT_FILE = "accounts.properties";
     private static final String LOGIN_PREF_FILE = "login.properties";
     private static final String MOMENTS_FILE = "moments.txt";
+    private static final String MOMENT_NOTIFICATIONS_FILE = "moment-notifications.txt";
     private static final String PENDING_MESSAGES_FILE = "pending-private.txt";
     private static final String PENDING_DELIVERIES_FILE = "pending-deliveries.txt";
     private static final String MOMENT_RECORD_VERSION = "M2";
@@ -178,6 +187,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private String renderedConversationKey = null;
     private VoicePlayback activeVoicePlayback;
     private MomentsDialog activeMomentsDialog;
+    private java.util.List<MomentNotification> momentNotifications = new ArrayList<MomentNotification>();
     private Path logFile;
     private DateTimeFormatter displayTime = DateTimeFormatter.ofPattern("HH:mm:ss");
     private DateTimeFormatter logTime = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
@@ -205,6 +215,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         String conversationKey;
         String messageId;
         String deliveryStatus;
+        long sentAtMillis = 0L;
+        boolean recalled = false;
 
         ChatMessage(MessageKind kind, String sender, String body, String time) {
             this.kind = kind;
@@ -313,6 +325,24 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             this.time = time;
             this.author = author;
             this.text = text;
+        }
+    }
+
+    private static class MomentNotification {
+        String id;
+        String time;
+        String actor;
+        String action;
+        String detail;
+        boolean read;
+
+        MomentNotification(String id, String time, String actor, String action, String detail, boolean read) {
+            this.id = id;
+            this.time = time;
+            this.actor = actor;
+            this.action = action;
+            this.detail = detail;
+            this.read = read;
         }
     }
 
@@ -497,6 +527,19 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             }
         });
         onlineList.addMouseListener(new MouseAdapter() {
+            public void mouseClicked(MouseEvent e) {
+                if(e.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(e)) {
+                    int index = onlineList.locationToIndex(e.getPoint());
+                    if(index >= 0) {
+                        Rectangle bounds = onlineList.getCellBounds(index, index);
+                        String value = onlineList.getModel().getElementAt(index);
+                        if(bounds != null && e.getX() - bounds.x <= 62 && isUserConversation(value)) {
+                            showUserHomeDialog(value);
+                        }
+                    }
+                }
+            }
+
             public void mouseExited(MouseEvent e) {
                 hoveredConversationIndex = -1;
                 onlineList.repaint();
@@ -546,6 +589,12 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         accountPanel.setBorder(pad(SPACE_SM, SPACE_XS, SPACE_MD, SPACE_XS));
 
         sidebarAvatar = new AvatarView("?", false);
+        sidebarAvatar.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        sidebarAvatar.addMouseListener(new MouseAdapter() {
+            public void mouseClicked(MouseEvent e) {
+                if(e.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(e)) showProfileDialog();
+            }
+        });
         sidebarNameLabel = new JLabel("未登录");
         sidebarNameLabel.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 16));
         sidebarNameLabel.setForeground(TEXT);
@@ -593,6 +642,15 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         identity.setOpaque(false);
         identity.setLayout(new BoxLayout(identity, BoxLayout.X_AXIS));
         conversationAvatar = new AvatarView(BROADCAST_CHAT, false);
+        conversationAvatar.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        conversationAvatar.addMouseListener(new MouseAdapter() {
+            public void mouseClicked(MouseEvent e) {
+                if(e.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(e)) {
+                    String target = getSelectedPrivateTarget();
+                    if(target != null && target.length() > 0) showUserHomeDialog(target);
+                }
+            }
+        });
         identity.add(conversationAvatar);
         identity.add(Box.createHorizontalStrut(10));
         JPanel textBlock = new JPanel();
@@ -949,27 +1007,53 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         if(buttonHeaderMore == null) return;
         JPopupMenu menu = new JPopupMenu();
         menu.setBorder(new CompoundBorder(new RoundedBorder(BORDER, RADIUS_MD), pad(SPACE_XS)));
-        menu.add(createConversationMenuItem("发起视频通话", new Runnable() {
-            public void run() {
-                startVideoCall();
+        final String target = getSelectedPrivateTarget();
+        if(target != null && target.length() > 0) {
+            menu.add(createConversationMenuItem("查看主页", new Runnable() {
+                public void run() { showUserHomeDialog(target); }
+            }));
+            if(friends.contains(target)) {
+                menu.add(createConversationMenuItem("删除好友", new Runnable() {
+                    public void run() { deleteFriend(target); }
+                }));
+            } else {
+                menu.add(createConversationMenuItem("添加好友", new Runnable() {
+                    public void run() { requestFriend(target); }
+                }));
             }
+            menu.addSeparator();
+        }
+        if(selectedGroupName != null) {
+            menu.add(createConversationMenuItem("群聊资料", new Runnable() {
+                public void run() { showGroupInfoDialog(selectedGroupName); }
+            }));
+            menu.add(createConversationMenuItem("查看群成员", new Runnable() {
+                public void run() { showGroupMembersDialog(selectedGroupName); }
+            }));
+            menu.add(createConversationMenuItem("拉人进群", new Runnable() {
+                public void run() { inviteMembersToGroup(selectedGroupName); }
+            }));
+            menu.add(createConversationMenuItem("踢人出群", new Runnable() {
+                public void run() { kickMemberFromGroup(selectedGroupName); }
+            }));
+            menu.add(createConversationMenuItem("退出群聊", new Runnable() {
+                public void run() { leaveGroup(selectedGroupName); }
+            }));
+            menu.addSeparator();
+        }
+        menu.add(createConversationMenuItem("发起视频通话", new Runnable() {
+            public void run() { startVideoCall(); }
         }));
         menu.addSeparator();
         menu.add(createConversationMenuItem("刷新在线列表", new Runnable() {
-            public void run() {
-                refreshUsers();
-            }
+            public void run() { refreshUsers(); }
         }));
         menu.add(createConversationMenuItem("打开聊天记录", new Runnable() {
-            public void run() {
-                showLogPath();
-            }
+            public void run() { showLogPath(); }
         }));
         menu.addSeparator();
         menu.add(createConversationMenuItem("清空当前窗口", new Runnable() {
-            public void run() {
-                clearCurrentConversationWindow();
-            }
+            public void run() { clearCurrentConversationWindow(); }
         }));
         menu.show(buttonHeaderMore, 0, buttonHeaderMore.getHeight() + SPACE_XS);
     }
@@ -1225,6 +1309,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private ChatMessage parseDisplayMessage(String str, String time) {
         String text = stripHtml(str).replace('\u00A0', ' ').trim();
         if(text.length() == 0) return null;
+        if(text.startsWith("Current Connected Users:")) return null;
 
         if(text.startsWith("[private sent to ")) return null;
 
@@ -1250,6 +1335,11 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                 String sender = payload.substring(0, colon).trim();
                 String body = payload.substring(colon + 1).trim();
                 if(handleProtocolMessage(sender, body, time)) return null;
+                if(!friends.contains(sender)) {
+                    showInlineNotice("收到非好友 " + sender + " 的私聊，已拦截。", DANGER);
+                    appendLog("[blocked private from " + sender + "] " + body);
+                    return null;
+                }
                 return withConversation(new ChatMessage(messageKindFor(sender), sender, body, time), sender);
             }
         }
@@ -1277,6 +1367,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             String sender = text.substring(0, colon).trim();
             String body = text.substring(colon + 1).trim();
             if(sender.length() > 0 && sender.indexOf(' ') < 0 && !sender.equalsIgnoreCase("Server")) {
+                if(handleBroadcastProtocolMessage(sender, body, time)) return null;
                 if(sender.equalsIgnoreCase(ownNick()) && consumeLocalBroadcastEcho(body)) return null;
                 return withConversation(new ChatMessage(messageKindFor(sender), sender, body, time), BROADCAST_CHAT);
             }
@@ -1338,6 +1429,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     }
 
     private boolean handleProtocolMessage(String sender, String body, String time) {
+        if(handleRecallProtocolMessage(sender, body)) return true;
         if(handlePrivateTextProtocolMessage(sender, body, time)) return true;
         if(handleReadReceiptMessage(sender, body)) return true;
         if(handleVideoCallProtocolMessage(sender, body)) return true;
@@ -1353,6 +1445,11 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         if(parts.length != 2) return true;
         String messageId = parts[0];
         String message = decodeToken(parts[1]);
+        if(!friends.contains(sender)) {
+            showInlineNotice("收到非好友 " + sender + " 的私聊，已拦截。", DANGER);
+            appendLog("[blocked private from " + sender + "] " + message);
+            return true;
+        }
         ChatMessage chatMessage = withConversation(new ChatMessage(MessageKind.INCOMING,
                 sender, message, time), sender);
         chatMessage.messageId = messageId;
@@ -1360,6 +1457,22 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         appendLog("[private] " + sender + ": " + message);
         rememberReadReceipt(sender, messageId);
         return true;
+    }
+
+    private boolean handleRecallProtocolMessage(String sender, String body) {
+        if(!body.startsWith(MESSAGE_RECALL_PREFIX)) return false;
+        String payload = body.substring(MESSAGE_RECALL_PREFIX.length());
+        String[] parts = payload.split("\\|", 2);
+        String messageId = parts.length > 0 ? decodeToken(parts[0]) : "";
+        String key = parts.length > 1 ? decodeToken(parts[1]) : sender;
+        if(key == null || key.length() == 0 || "private".equals(key)) key = sender;
+        recallMessageById(key, messageId, sender + " 撤回了一条消息");
+        return true;
+    }
+
+    private boolean handleBroadcastProtocolMessage(String sender, String body, String time) {
+        if(body.startsWith(MESSAGE_RECALL_PREFIX)) return handleRecallProtocolMessage(sender, body);
+        return false;
     }
 
     private boolean handleReadReceiptMessage(String sender, String body) {
@@ -1431,12 +1544,38 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             }
             return true;
         }
-        if(body.startsWith(GROUP_MESSAGE_PREFIX)) {
-            String payload = body.substring(GROUP_MESSAGE_PREFIX.length());
+        if(body.startsWith(GROUP_KICK_PREFIX)) {
+            String groupName = decodeToken(body.substring(GROUP_KICK_PREFIX.length()));
+            if(groupName.length() > 0) {
+                chatGroups.remove(groupName);
+                saveGroups();
+                rebuildConversationList(BROADCAST_CHAT);
+                showInlineNotice("你已被移出群聊：" + groupName, WARNING);
+            }
+            return true;
+        }
+        if(body.startsWith(GROUP_LEAVE_PREFIX)) {
+            String payload = body.substring(GROUP_LEAVE_PREFIX.length());
             String[] parts = payload.split("\\|", 2);
             if(parts.length == 2) {
                 String groupName = decodeToken(parts[0]);
-                String message = decodeToken(parts[1]);
+                String member = decodeToken(parts[1]);
+                Set<String> members = chatGroups.get(groupName);
+                if(members != null) {
+                    members.remove(member);
+                    saveGroups();
+                    rebuildConversationList(selectedConversationKey());
+                }
+            }
+            return true;
+        }
+        if(body.startsWith(GROUP_MESSAGE_PREFIX)) {
+            String payload = body.substring(GROUP_MESSAGE_PREFIX.length());
+            String[] parts = payload.split("\\|", 3);
+            if(parts.length >= 2) {
+                String groupName = decodeToken(parts[0]);
+                String messageId = parts.length == 3 ? decodeToken(parts[1]) : "";
+                String message = decodeToken(parts.length == 3 ? parts[2] : parts[1]);
                 Set<String> members = chatGroups.get(groupName);
                 if(members == null) {
                     members = new LinkedHashSet<String>();
@@ -1449,8 +1588,10 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                     saveGroups();
                     if(onlineList != null) onlineList.repaint();
                 }
-                historyWindow.addMessage(withConversation(new ChatMessage(MessageKind.INCOMING,
-                        sender + " / " + groupName, message, time), groupLabel(groupName)));
+                ChatMessage groupMessage = withConversation(new ChatMessage(MessageKind.INCOMING,
+                        sender + " / " + groupName, message, time), groupLabel(groupName));
+                groupMessage.messageId = messageId;
+                historyWindow.addMessage(groupMessage);
                 appendLog("[group " + groupName + " from " + sender + "] " + message);
             }
             return true;
@@ -1478,6 +1619,11 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             sentFriendRequests.remove(sender);
             addMsg("<font color=\"#666666\">" + escapeHtml(sender) + " 拒绝了你的好友申请。</font>");
             if(onlineList != null) onlineList.repaint();
+            return true;
+        }
+        if(body.startsWith(FRIEND_DELETE_PREFIX)) {
+            removeFriendLocally(sender, false);
+            showInlineNotice(sender + " 已将你删除，双方现在是非好友。", WARNING);
             return true;
         }
         return false;
@@ -1714,6 +1860,12 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         return value != null && value.startsWith(GROUP_LABEL_PREFIX);
     }
 
+    private boolean isUserConversation(String value) {
+        return value != null && value.length() > 0
+                && !isBroadcastConversation(value)
+                && !isGroupConversation(value);
+    }
+
     private String groupLabel(String groupName) {
         return GROUP_LABEL_PREFIX + groupName;
     }
@@ -1762,7 +1914,11 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             if(conversationTitleLabel != null) conversationTitleLabel.setText(selected);
             boolean online = visibleUsers.contains(selected);
             if(conversationSubtitleLabel != null) {
-                conversationSubtitleLabel.setText(online ? "当前为私聊，只发送给 " + selected : "好友离线，文字消息将待发送");
+                if(!friends.contains(selected)) {
+                    conversationSubtitleLabel.setText(online ? "非好友，不能发送消息" : "非好友离线，不能发送消息");
+                } else {
+                    conversationSubtitleLabel.setText(online ? "当前为私聊，只发送给 " + selected : "好友离线，消息将待发送");
+                }
             }
             if(conversationAvatar != null) conversationAvatar.setAvatar(selected, false);
             setConversationState(online ? "在线" : "离线",
@@ -1782,6 +1938,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private void updateVideoButtonState() {
         boolean canCall = ck != null && ck.isConnected()
                 && selectedChatTarget != null
+                && friends.contains(selectedChatTarget)
                 && visibleUsers.contains(selectedChatTarget);
         if(buttonVideo != null) {
             buttonVideo.setEnabled(canCall);
@@ -1803,24 +1960,25 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     }
 
     private void updateAttachmentToolState(boolean canSendLiveAttachment) {
-        String tooltip = canSendLiveAttachment
-                ? "发送给 " + selectedChatTarget
-                : "选择在线好友后可用";
+        boolean canAttach = ck != null && ck.isConnected() && attachmentAllowedInCurrentConversation();
+        String selected = selectedConversationKey();
+        String targetName = selected == null ? "当前会话" : displayConversationName(selected);
+        String tooltip = canAttach ? "发送到 " + targetName : "请选择可发送的会话";
         if(buttonImage != null) {
-            buttonImage.setEnabled(canSendLiveAttachment);
-            buttonImage.setToolTipText(canSendLiveAttachment ? "发送图片给 " + selectedChatTarget : tooltip);
+            buttonImage.setEnabled(canAttach);
+            buttonImage.setToolTipText(canAttach ? "发送图片到 " + targetName : tooltip);
         }
         if(buttonVoice != null) {
-            buttonVoice.setEnabled(canSendLiveAttachment);
-            buttonVoice.setToolTipText(canSendLiveAttachment ? "发送语音文件给 " + selectedChatTarget : tooltip);
+            buttonVoice.setEnabled(canAttach);
+            buttonVoice.setToolTipText(canAttach ? "发送语音文件到 " + targetName : tooltip);
         }
         if(buttonRecord != null) {
-            buttonRecord.setEnabled(canSendLiveAttachment);
-            buttonRecord.setToolTipText(canSendLiveAttachment ? "录制语音给 " + selectedChatTarget : tooltip);
+            buttonRecord.setEnabled(canAttach);
+            buttonRecord.setToolTipText(canAttach ? "录制语音到 " + targetName : tooltip);
         }
         if(buttonFile != null) {
-            buttonFile.setEnabled(canSendLiveAttachment);
-            buttonFile.setToolTipText(canSendLiveAttachment ? "发送文件给 " + selectedChatTarget : tooltip);
+            buttonFile.setEnabled(canAttach);
+            buttonFile.setToolTipText(canAttach ? "发送文件到 " + targetName : tooltip);
         }
     }
 
@@ -1970,7 +2128,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         if(message == null) return BROADCAST_CHAT;
         String key = message.conversationKey;
         if((key == null || key.length() == 0) && message.kind == MessageKind.SYSTEM) {
-            key = selectedConversationKey();
+            key = BROADCAST_CHAT;
         }
         return normalizeConversationKey(key);
     }
@@ -2021,6 +2179,68 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         return visibleUsers.contains(key) ? "发送一条消息开始私聊" : "对方离线，文字消息会先显示为待发送";
     }
 
+    private boolean canRecallMessage(ChatMessage message) {
+        return message != null && message.kind == MessageKind.OUTGOING && !message.fileMessage
+                && !message.recalled && message.messageId != null && message.messageId.length() > 0
+                && message.sentAtMillis > 0 && System.currentTimeMillis() - message.sentAtMillis <= 2L * 60L * 1000L;
+    }
+
+    private void recallOwnMessage(ChatMessage message) {
+        if(!canRecallMessage(message)) {
+            showInlineNotice("只能撤回自己发送且 2 分钟内的文字消息。", WARNING);
+            return;
+        }
+        String key = message.conversationKey;
+        message.recalled = true;
+        message.body = "你撤回了一条消息";
+        message.deliveryStatus = null;
+        sendRecallProtocol(key, message.messageId);
+        renderConversationMessages(selectedConversationKey());
+        updateConversationPreview(message);
+    }
+
+    private void sendRecallProtocol(String key, String messageId) {
+        String payload = MESSAGE_RECALL_PREFIX + encodeToken(messageId) + "|" + encodeToken(key == null ? "" : key);
+        if(selectedChatTarget != null || (key != null && isUserConversation(key))) {
+            String target = selectedChatTarget != null ? selectedChatTarget : key;
+            if(ck != null && ck.isConnected() && target != null) ck.sendMessage("/msg " + target + " " + payload);
+            else if(target != null) queuePendingDelivery(target, payload, "消息撤回");
+        } else if(key != null && isGroupConversation(key)) {
+            String groupName = groupNameFromLabel(key);
+            Set<String> members = chatGroups.get(groupName);
+            if(members != null) {
+                Iterator<String> it = members.iterator();
+                while(it.hasNext()) {
+                    String member = it.next();
+                    if(member.equalsIgnoreCase(ownNick())) continue;
+                    if(ck != null && ck.isConnected() && visibleUsers.contains(member)) ck.sendMessage("/msg " + member + " " + payload);
+                    else queuePendingDelivery(member, payload, "群消息撤回");
+                }
+            }
+        } else if(key != null && isBroadcastConversation(key)) {
+            if(ck != null && ck.isConnected()) ck.sendMessage(payload);
+        }
+    }
+
+    private void recallMessageById(String key, String messageId, String text) {
+        if(messageId == null || messageId.length() == 0) return;
+        String normalized = normalizeConversationKey(key);
+        java.util.List<ChatMessage> messages = conversationMessages.get(normalized);
+        if(messages == null && isUserConversation(normalized)) messages = conversationMessages.get(key);
+        if(messages == null) return;
+        for(int i=0;i<messages.size();i++) {
+            ChatMessage m = messages.get(i);
+            if(messageId.equals(m.messageId)) {
+                m.recalled = true;
+                m.body = text == null ? "对方撤回了一条消息" : text;
+                m.deliveryStatus = null;
+                if(isSelectedConversation(normalized)) renderConversationMessages(normalized);
+                updateConversationPreview(m);
+                break;
+            }
+        }
+    }
+
     private void clearCurrentConversationWindow() {
         String selected = selectedConversationKey();
         if(selected != null) conversationMessages.remove(selected);
@@ -2031,7 +2251,9 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private String previewText(ChatMessage message) {
         String speaker = message.kind == MessageKind.OUTGOING ? "我" : shortSenderName(message.sender);
         String content;
-        if(message.fileMessage) {
+        if(message.recalled) {
+            content = "[已撤回]";
+        } else if(message.fileMessage) {
             content = "[" + attachmentTypeLabel(message.fileName) + "] " + message.fileName;
         } else {
             content = message.body == null ? "" : message.body;
@@ -2076,21 +2298,20 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             return;
         }
         if(hasFile) {
-            String target = getSelectedPrivateTarget();
-            if(target == null || target.length() == 0) {
-                showInlineNotice("请选择一个在线联系人后再发送附件。", DANGER);
-                return;
-            }
-            if(!visibleUsers.contains(target)) {
-                showInlineNotice("对方离线，附件暂不能离线发送。", WARNING);
+            if(!attachmentAllowedInCurrentConversation()) {
+                showInlineNotice(selectedChatTarget != null ? "非好友不能发送附件，请先添加好友。" : "当前会话不能发送附件。", DANGER);
                 return;
             }
             if(hasText && toSend.startsWith("/")) {
                 showInlineNotice("附件待发送时不能同时输入命令。", DANGER);
                 return;
             }
-            if(hasText) sendPrivate(target, toSend);
-            if(sendFileTo(target, pendingFile)) {
+            if(hasText) {
+                if(selectedGroupName != null) sendGroupMessage(selectedGroupName, toSend);
+                else if(selectedChatTarget != null) sendPrivate(selectedChatTarget, toSend);
+                else sendBroadcastMessage(toSend);
+            }
+            if(sendFileInCurrentConversation(pendingFile)) {
                 clearAttachment();
                 lastMsg = hasText ? "" + toSend : "";
                 msgWindow.setText("");
@@ -2126,6 +2347,13 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         } else if(selectedGroupName != null) {
             if(!sendGroupMessage(selectedGroupName, toSend)) return;
         } else if(selectedChatTarget != null) {
+            if(!friends.contains(selectedChatTarget)) {
+                showFailedOutgoingMessage(selectedChatTarget, ownNick(), toSend, "非好友，消息未发送");
+                showInlineNotice("非好友不能发送消息，请先添加好友。", DANGER);
+                lastMsg = "" + toSend;
+                msgWindow.setText("");
+                return;
+            }
             sendPrivate(selectedChatTarget, toSend);
         } else {
             sendBroadcastMessage(toSend);
@@ -2183,6 +2411,36 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             addMsg("<font color=\"#cc6600\">好友在线：" + escapeHtml(nick) + "</font>");
         }
         if(onlineList != null) onlineList.repaint();
+    }
+
+    private void deleteFriend(final String nick) {
+        if(nick == null || nick.length() == 0) return;
+        if(!friends.contains(nick)) {
+            showInlineNotice(nick + " 还不是你的好友。", MUTED);
+            return;
+        }
+        int choice = JOptionPane.showConfirmDialog(this,
+                "确定删除好友 “" + nick + "” 吗？删除后双方都将变为非好友。",
+                "删除好友", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+        if(choice != JOptionPane.YES_OPTION) return;
+        removeFriendLocally(nick, true);
+        if(ck != null && ck.isConnected()) {
+            ck.sendMessage("/msg " + nick + " " + FRIEND_DELETE_PREFIX + ownNick());
+        } else {
+            queuePendingDelivery(nick, FRIEND_DELETE_PREFIX + ownNick(), "删除好友同步");
+        }
+    }
+
+    private void removeFriendLocally(String nick, boolean showNotice) {
+        if(nick == null || nick.length() == 0) return;
+        friends.remove(nick);
+        sentFriendRequests.remove(nick);
+        incomingFriendRequests.remove(nick);
+        saveFriends();
+        refreshActiveMoments();
+        rebuildConversationList(selectedConversationKey());
+        updateSelectedConversation();
+        if(showNotice) showInlineNotice("已删除好友：" + nick, WARNING);
     }
 
     private void startVideoCall() {
@@ -2368,6 +2626,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                     }
                 }
             }
+            loadMomentNotifications();
         } catch(Exception e) {
             JOptionPane.showMessageDialog(this, "加载本地用户数据失败：" + e.getMessage());
         }
@@ -2494,7 +2753,15 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         while(it.hasNext()) {
             PendingDelivery pending = it.next();
             if(!onlineUsers.contains(pending.target)) continue;
-            ck.sendMessage("/msg " + pending.target + " " + pending.body);
+            if(pending.body.startsWith(PENDING_FILE_PREFIX)) {
+                String payload = pending.body.substring(PENDING_FILE_PREFIX.length());
+                String[] fileParts = payload.split("\\|", 2);
+                if(fileParts.length == 2) {
+                    ck.sendMessage("/file " + pending.target + " " + decodeToken(fileParts[0]) + " " + decodeToken(fileParts[1]));
+                }
+            } else {
+                ck.sendMessage("/msg " + pending.target + " " + pending.body);
+            }
             sent.add(pending.id);
             appendLog("[offline delivery to " + pending.target + "] " + pending.note);
         }
@@ -2695,6 +2962,122 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
     }
 
+    private void showGroupInfoDialog(final String groupName) {
+        if(groupName == null || groupName.length() == 0) return;
+        final JDialog dialog = new JDialog(this, "群聊资料", true);
+        dialog.setSize(440, 560);
+        dialog.setLocationRelativeTo(this);
+        JPanel root = new JPanel(new BorderLayout(SPACE_MD, SPACE_MD));
+        root.setBackground(CHAT_BACKGROUND);
+        root.setBorder(pad(SPACE_LG));
+        JLabel title = new JLabel(groupName);
+        title.setFont(PAGE_TITLE_FONT);
+        title.setForeground(TEXT);
+        root.add(title, BorderLayout.NORTH);
+        JTextArea membersText = new JTextArea(membersToDisplayText(chatGroups.get(groupName)));
+        membersText.setEditable(false);
+        membersText.setFont(UI_FONT);
+        membersText.setBackground(SURFACE);
+        membersText.setBorder(pad(SPACE_MD));
+        root.add(new JScrollPane(membersText), BorderLayout.CENTER);
+        JPanel buttons = new JPanel(new GridLayout(2, 2, SPACE_SM, SPACE_SM));
+        buttons.setOpaque(false);
+        JButton invite = createButton("拉人进群", false);
+        JButton kick = createButton("踢人出群", false);
+        JButton file = createButton("发送群文件", false);
+        JButton leave = createButton("退出群聊", false);
+        invite.addActionListener(new ActionListener(){ public void actionPerformed(ActionEvent e){ inviteMembersToGroup(groupName); membersText.setText(membersToDisplayText(chatGroups.get(groupName))); }});
+        kick.addActionListener(new ActionListener(){ public void actionPerformed(ActionEvent e){ kickMemberFromGroup(groupName); membersText.setText(membersToDisplayText(chatGroups.get(groupName))); }});
+        file.addActionListener(new ActionListener(){ public void actionPerformed(ActionEvent e){ dialog.dispose(); selectConversation(groupLabel(groupName)); chooseAndSendFile(); }});
+        leave.addActionListener(new ActionListener(){ public void actionPerformed(ActionEvent e){ dialog.dispose(); leaveGroup(groupName); }});
+        buttons.add(invite); buttons.add(kick); buttons.add(file); buttons.add(leave);
+        root.add(buttons, BorderLayout.SOUTH);
+        dialog.setContentPane(root);
+        dialog.setVisible(true);
+    }
+
+    private void showGroupMembersDialog(String groupName) {
+        JOptionPane.showMessageDialog(this, membersToDisplayText(chatGroups.get(groupName)), "群成员", JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    private String membersToDisplayText(Set<String> members) {
+        if(members == null || members.size() == 0) return "暂无成员";
+        StringBuilder sb = new StringBuilder();
+        java.util.List<String> list = new ArrayList<String>(members);
+        Collections.sort(list, String.CASE_INSENSITIVE_ORDER);
+        for(int i=0;i<list.size();i++) sb.append(list.get(i)).append(visibleUsers.contains(list.get(i)) ? "（在线）" : "").append('\n');
+        return sb.toString();
+    }
+
+    private void inviteMembersToGroup(String groupName) {
+        Set<String> members = chatGroups.get(groupName);
+        if(members == null) return;
+        java.util.List<String> candidates = new ArrayList<String>();
+        Set<String> all = new LinkedHashSet<String>();
+        all.addAll(friends);
+        all.addAll(visibleUsers);
+        Iterator<String> it = all.iterator();
+        while(it.hasNext()) {
+            String user = it.next();
+            if(user.equalsIgnoreCase(ownNick()) || members.contains(user)) continue;
+            candidates.add(user);
+        }
+        Collections.sort(candidates, String.CASE_INSENSITIVE_ORDER);
+        if(candidates.size() == 0) { showInlineNotice("没有可拉入的新成员。", MUTED); return; }
+        JList<String> list = new JList<String>(new Vector<String>(candidates));
+        list.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
+        list.setVisibleRowCount(Math.min(8, candidates.size()));
+        int option = JOptionPane.showConfirmDialog(this, new JScrollPane(list), "选择拉入群聊的成员", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if(option != JOptionPane.OK_OPTION) return;
+        java.util.List<String> selected = list.getSelectedValuesList();
+        if(selected.size() == 0) return;
+        members.addAll(selected);
+        saveGroups();
+        sendGroupInvite(groupName, members);
+        rebuildConversationList(groupLabel(groupName));
+        showInlineNotice("已拉入 " + selected.size() + " 人。", PRIMARY_DARK);
+    }
+
+    private void kickMemberFromGroup(String groupName) {
+        Set<String> members = chatGroups.get(groupName);
+        if(members == null || members.size() <= 1) return;
+        java.util.List<String> candidates = new ArrayList<String>(members);
+        candidates.remove(ownNick());
+        Collections.sort(candidates, String.CASE_INSENSITIVE_ORDER);
+        if(candidates.size() == 0) { showInlineNotice("没有可踢出的成员。", MUTED); return; }
+        String kicked = (String)JOptionPane.showInputDialog(this, "选择要踢出的成员", "踢人出群",
+                JOptionPane.PLAIN_MESSAGE, null, candidates.toArray(), candidates.get(0));
+        if(kicked == null || kicked.length() == 0) return;
+        members.remove(kicked);
+        saveGroups();
+        if(ck != null && ck.isConnected()) ck.sendMessage("/msg " + kicked + " " + GROUP_KICK_PREFIX + encodeToken(groupName));
+        else queuePendingDelivery(kicked, GROUP_KICK_PREFIX + encodeToken(groupName), "踢出群聊：" + groupName);
+        sendGroupInvite(groupName, members);
+        rebuildConversationList(groupLabel(groupName));
+        showInlineNotice("已将 " + kicked + " 移出群聊。", WARNING);
+    }
+
+    private void leaveGroup(String groupName) {
+        if(groupName == null || !chatGroups.containsKey(groupName)) return;
+        int choice = JOptionPane.showConfirmDialog(this, "确定退出群聊 “" + groupName + "” 吗？", "退出群聊", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+        if(choice != JOptionPane.YES_OPTION) return;
+        Set<String> members = chatGroups.get(groupName);
+        chatGroups.remove(groupName);
+        saveGroups();
+        if(members != null) {
+            String payload = GROUP_LEAVE_PREFIX + encodeToken(groupName) + "|" + encodeToken(ownNick());
+            Iterator<String> it = members.iterator();
+            while(it.hasNext()) {
+                String member = it.next();
+                if(member.equalsIgnoreCase(ownNick())) continue;
+                if(ck != null && ck.isConnected() && visibleUsers.contains(member)) ck.sendMessage("/msg " + member + " " + payload);
+                else queuePendingDelivery(member, payload, "退出群聊：" + groupName);
+            }
+        }
+        rebuildConversationList(BROADCAST_CHAT);
+        showInlineNotice("已退出群聊：" + groupName, WARNING);
+    }
+
     private void saveProfile() {
         try {
             if(currentUserDir == null) return;
@@ -2817,10 +3200,36 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     }
 
     private void showProfileDialog() {
-        JTextField displayNameField = new JTextField(currentProfile.getProperty("displayName", currentUser), 18);
-        JTextArea signatureArea = new JTextArea(currentProfile.getProperty("signature", ""), 4, 18);
+        final JTextField displayNameField = new JTextField(currentProfile.getProperty("displayName", currentUser), 18);
+        final JTextArea signatureArea = new JTextArea(currentProfile.getProperty("signature", ""), 4, 18);
         signatureArea.setLineWrap(true);
         signatureArea.setWrapStyleWord(true);
+
+        final AvatarView previewAvatar = new AvatarView(currentUser, false);
+        previewAvatar.setAvatarSize(72);
+        JButton chooseAvatar = createButton("选择头像", false);
+        JButton resetAvatar = createButton("恢复字母头像", false);
+        chooseAvatar.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                chooseLocalAvatar(previewAvatar);
+            }
+        });
+        resetAvatar.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                currentProfile.remove("avatarPath");
+                currentProfile.setProperty("avatarMode", "letter");
+                previewAvatar.repaint();
+            }
+        });
+
+        JPanel avatarRow = new JPanel(new BorderLayout(SPACE_MD, 0));
+        avatarRow.setOpaque(false);
+        JPanel avatarButtons = new JPanel(new FlowLayout(FlowLayout.LEFT, SPACE_SM, 0));
+        avatarButtons.setOpaque(false);
+        avatarButtons.add(chooseAvatar);
+        avatarButtons.add(resetAvatar);
+        avatarRow.add(previewAvatar, BorderLayout.WEST);
+        avatarRow.add(avatarButtons, BorderLayout.CENTER);
 
         JPanel panel = new JPanel(new BorderLayout(8, 8));
         JPanel rows = new JPanel(new GridBagLayout());
@@ -2829,8 +3238,9 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         gbc.anchor = GridBagConstraints.WEST;
         gbc.fill = GridBagConstraints.HORIZONTAL;
         addLoginRow(rows, gbc, 0, "账号", new JLabel(currentUser));
-        addLoginRow(rows, gbc, 1, "显示名", displayNameField);
-        addLoginRow(rows, gbc, 2, "签名", new JScrollPane(signatureArea));
+        addLoginRow(rows, gbc, 1, "头像", avatarRow);
+        addLoginRow(rows, gbc, 2, "显示名", displayNameField);
+        addLoginRow(rows, gbc, 3, "签名", new JScrollPane(signatureArea));
         panel.add(rows, BorderLayout.CENTER);
 
         int option = JOptionPane.showConfirmDialog(this, panel, "个人信息",
@@ -2840,8 +3250,433 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             currentProfile.setProperty("signature", signatureArea.getText().trim());
             saveProfile();
             refreshSidebarProfile();
-            addMsg("<font color=\"#3366cc\">个人信息已保存。</font>");
+            if(conversationAvatar != null) conversationAvatar.repaint();
+            if(onlineList != null) onlineList.repaint();
+            showInlineNotice("个人信息已保存。", PRIMARY_DARK);
         }
+    }
+
+    private void chooseLocalAvatar(AvatarView previewAvatar) {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("选择头像图片");
+        chooser.setCurrentDirectory(new File(System.getProperty("user.home"), "Pictures"));
+        chooser.setFileFilter(new FileNameExtensionFilter("图片文件", "png", "jpg", "jpeg", "gif", "bmp", "webp"));
+        if(chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return;
+        File selected = chooser.getSelectedFile();
+        if(selected == null || !selected.isFile()) return;
+        try {
+            BufferedImage image = ImageIO.read(selected);
+            if(image == null) {
+                JOptionPane.showMessageDialog(this, "请选择有效的图片文件。", "头像", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            Path avatarDir = currentUserDir.resolve("avatar");
+            Files.createDirectories(avatarDir);
+            String ext = fileExtension(selected.getName());
+            if(ext.length() == 0) ext = ".png";
+            Path target = avatarDir.resolve("avatar" + ext.toLowerCase(Locale.ROOT));
+            Files.copy(selected.toPath(), target, StandardCopyOption.REPLACE_EXISTING);
+            currentProfile.setProperty("avatarPath", target.toString());
+            currentProfile.setProperty("avatarMode", "image");
+            if(previewAvatar != null) previewAvatar.repaint();
+            refreshSidebarProfile();
+        } catch(Exception ex) {
+            JOptionPane.showMessageDialog(this, "头像保存失败：" + ex.getMessage(), "头像", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private String fileExtension(String name) {
+        if(name == null) return "";
+        int dot = name.lastIndexOf('.');
+        return dot >= 0 ? name.substring(dot) : "";
+    }
+
+    private void showUserHomeDialog(final String username) {
+        if(username == null || username.length() == 0) return;
+        final boolean isSelf = username.equalsIgnoreCase(currentUser);
+        final boolean isFriend = friends.contains(username);
+        if(isFriend && !isSelf) {
+            requestServerMoments();
+            if(ck != null && ck.isConnected() && visibleUsers.contains(username)) {
+                ck.sendMessage("/msg " + username + " " + MOMENT_SYNC_REQUEST_PREFIX + ownNick());
+            }
+        }
+        Properties profile = loadProfileForUser(username);
+        String displayName = profile.getProperty("displayName", username);
+        String signature = profile.getProperty("signature", "这个人还没有写个性签名。");
+
+        final JDialog dialog = new JDialog(this, username + " 的主页", true);
+        dialog.setDefaultCloseOperation(DISPOSE_ON_CLOSE);
+        dialog.setSize(390, 640);
+        dialog.setMinimumSize(new Dimension(350, 520));
+        dialog.setLocationRelativeTo(this);
+
+        JPanel root = new JPanel(new BorderLayout());
+        root.setBackground(CHAT_BACKGROUND);
+        root.setBorder(pad(SPACE_LG));
+        BubblePanel card = createCardPanel(SPACE_LG);
+        card.setLayout(new BoxLayout(card, BoxLayout.Y_AXIS));
+
+        JPanel header = new JPanel(new BorderLayout(SPACE_MD, 0));
+        header.setOpaque(false);
+        AvatarView avatar = new AvatarView(username, false);
+        avatar.setAvatarSize(72);
+        header.add(avatar, BorderLayout.WEST);
+        JPanel headerText = new JPanel();
+        headerText.setOpaque(false);
+        headerText.setLayout(new BoxLayout(headerText, BoxLayout.Y_AXIS));
+        JLabel name = new JLabel(displayName + (isSelf ? "（我）" : ""));
+        name.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 18));
+        name.setForeground(TEXT);
+        JLabel account = new JLabel("账号：" + username);
+        account.setFont(UI_FONT_SMALL);
+        account.setForeground(MUTED);
+        JLabel relation = new JLabel(isSelf ? "自己的主页" : (isFriend ? "好友" : "非好友"));
+        relation.setFont(UI_FONT_SMALL);
+        relation.setForeground(isFriend || isSelf ? PRIMARY_DARK : SOFT_MUTED);
+        headerText.add(name);
+        headerText.add(Box.createVerticalStrut(SPACE_XS));
+        headerText.add(account);
+        headerText.add(Box.createVerticalStrut(SPACE_XS));
+        headerText.add(relation);
+        header.add(headerText, BorderLayout.CENTER);
+        card.add(header);
+        card.add(sectionDivider());
+        card.add(profileInfoRow("个性签名", signature.length() == 0 ? "这个人还没有写个性签名。" : signature));
+        if(isFriend && !isSelf) {
+            card.add(profileInfoRow("共同好友", commonFriendsCount(username) + " 个"));
+            card.add(profileInfoRow("共同群聊", commonGroupsCount(username) + " 个"));
+        }
+        card.add(sectionDivider());
+        JLabel momentsTitle = new JLabel("朋友圈");
+        momentsTitle.setFont(UI_FONT_BOLD);
+        momentsTitle.setForeground(MUTED);
+        momentsTitle.setAlignmentX(Component.LEFT_ALIGNMENT);
+        card.add(momentsTitle);
+        card.add(Box.createVerticalStrut(SPACE_SM));
+        JPanel momentsPreview = createUserMomentsPreview(username, isSelf || isFriend);
+        momentsPreview.setAlignmentX(Component.LEFT_ALIGNMENT);
+        card.add(momentsPreview);
+        card.add(Box.createVerticalGlue());
+        card.add(sectionDivider());
+        JPanel actions = new JPanel(new GridLayout(1, isSelf ? 1 : 2, SPACE_SM, 0));
+        actions.setOpaque(false);
+        actions.setAlignmentX(Component.LEFT_ALIGNMENT);
+        if(isSelf) {
+            JButton edit = createButton("编辑资料", false);
+            edit.addActionListener(new ActionListener() {
+                public void actionPerformed(ActionEvent e) { dialog.dispose(); showProfileDialog(); }
+            });
+            actions.add(edit);
+        } else {
+            JButton msg = createButton("发消息", true);
+            msg.setEnabled(isFriend);
+            msg.setToolTipText(isFriend ? "进入聊天" : "非好友不能发送消息");
+            msg.addActionListener(new ActionListener() {
+                public void actionPerformed(ActionEvent e) { dialog.dispose(); selectConversation(username); }
+            });
+            JButton relationButton = createButton(isFriend ? "删除好友" : "添加好友", false);
+            relationButton.addActionListener(new ActionListener() {
+                public void actionPerformed(ActionEvent e) {
+                    dialog.dispose();
+                    if(isFriend) deleteFriend(username);
+                    else requestFriend(username);
+                }
+            });
+            actions.add(msg);
+            actions.add(relationButton);
+        }
+        card.add(actions);
+        root.add(card, BorderLayout.CENTER);
+        dialog.setContentPane(root);
+        dialog.setVisible(true);
+    }
+
+    private JPanel profileInfoRow(String label, String value) {
+        JPanel row = new JPanel(new BorderLayout(SPACE_MD, 0));
+        row.setOpaque(false);
+        row.setBorder(pad(SPACE_XS, 0, SPACE_XS, 0));
+        row.setAlignmentX(Component.LEFT_ALIGNMENT);
+        JLabel left = new JLabel(label);
+        left.setFont(UI_FONT_BOLD);
+        left.setForeground(MUTED);
+        left.setPreferredSize(new Dimension(84, 24));
+        JLabel right = new JLabel("<html><div style=\"width:210px;\">" + htmlText(value) + "</div></html>");
+        right.setFont(UI_FONT);
+        right.setForeground(TEXT);
+        row.add(left, BorderLayout.WEST);
+        row.add(right, BorderLayout.CENTER);
+        return row;
+    }
+
+    private Component sectionDivider() {
+        JSeparator separator = new JSeparator();
+        separator.setForeground(BORDER_LIGHT);
+        separator.setBackground(BORDER_LIGHT);
+        separator.setMaximumSize(new Dimension(Integer.MAX_VALUE, 18));
+        separator.setAlignmentX(Component.LEFT_ALIGNMENT);
+        return separator;
+    }
+
+    private JPanel createUserMomentsPreview(final String username, boolean canView) {
+        JPanel panel = new JPanel(new BorderLayout());
+        panel.setOpaque(false);
+        panel.setBorder(pad(SPACE_SM, 0, SPACE_SM, 0));
+        if(!canView) {
+            JLabel locked = new JLabel("非好友不可查看朋友圈");
+            locked.setFont(UI_FONT);
+            locked.setForeground(SOFT_MUTED);
+            panel.add(locked, BorderLayout.CENTER);
+            return panel;
+        }
+        final java.util.List<Moment> moments = visibleMomentsForAuthor(username);
+        if(moments.size() == 0) {
+            JLabel empty = new JLabel("暂无朋友圈动态");
+            empty.setFont(UI_FONT);
+            empty.setForeground(SOFT_MUTED);
+            panel.add(empty, BorderLayout.CENTER);
+            return panel;
+        }
+        JPanel preview = new JPanel(new GridLayout(1, Math.min(3, moments.size()), SPACE_SM, 0));
+        preview.setOpaque(false);
+        int count = Math.min(3, moments.size());
+        for(int i=0;i<count;i++) {
+            Moment moment = moments.get(i);
+            BubblePanel item = new BubblePanel(SURFACE_SOFT, BORDER_LIGHT, RADIUS_MD);
+            item.setLayout(new BorderLayout());
+            item.setBorder(pad(SPACE_SM));
+            JLabel text = new JLabel("<html><div style=\"width:76px;height:48px;\">" + htmlText(clipPreview(moment.text, 18)) + "</div></html>");
+            text.setFont(UI_FONT_SMALL);
+            text.setForeground(TEXT);
+            item.add(text, BorderLayout.CENTER);
+            preview.add(item);
+        }
+        panel.add(preview, BorderLayout.CENTER);
+        JLabel tip = new JLabel("双击查看全部朋友圈");
+        tip.setFont(new Font("Microsoft YaHei UI", Font.PLAIN, 11));
+        tip.setForeground(MUTED);
+        panel.add(tip, BorderLayout.SOUTH);
+        panel.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        panel.addMouseListener(new MouseAdapter() {
+            public void mouseClicked(MouseEvent e) {
+                if(e.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(e)) showUserMomentsDialog(username);
+            }
+        });
+        return panel;
+    }
+
+    private void showUserMomentsDialog(final String username) {
+        if(!username.equalsIgnoreCase(currentUser) && !friends.contains(username)) {
+            JOptionPane.showMessageDialog(this, "只有好友的朋友圈可见。", "朋友圈", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        final JDialog dialog = new JDialog(this, username + " 的朋友圈", true);
+        dialog.setDefaultCloseOperation(DISPOSE_ON_CLOSE);
+        dialog.setSize(560, 640);
+        dialog.setMinimumSize(new Dimension(500, 520));
+        dialog.setLocationRelativeTo(this);
+        final JPanel feed = new JPanel();
+        feed.setBackground(CHAT_BACKGROUND);
+        feed.setLayout(new BoxLayout(feed, BoxLayout.Y_AXIS));
+        Runnable refresh = new Runnable() {
+            public void run() {
+                feed.removeAll();
+                java.util.List<Moment> moments = visibleMomentsForAuthor(username);
+                if(moments.size() == 0) {
+                    feed.add(createEmptyState("暂无朋友圈动态", "刷新后可查看好友发布过的动态"));
+                } else {
+                    for(int i=0;i<moments.size();i++) {
+                        feed.add(createUserMomentCard(moments.get(i), feed, username));
+                        feed.add(Box.createVerticalStrut(SPACE_MD));
+                    }
+                }
+                feed.revalidate();
+                feed.repaint();
+            }
+        };
+        JPanel root = new JPanel(new BorderLayout(SPACE_MD, SPACE_MD));
+        root.setBackground(CHAT_BACKGROUND);
+        root.setBorder(pad(SPACE_LG));
+        JLabel title = new JLabel(username + " 的朋友圈");
+        title.setFont(PAGE_TITLE_FONT);
+        title.setForeground(TEXT);
+        root.add(title, BorderLayout.NORTH);
+        root.add(createModernScrollPane(feed, CHAT_BACKGROUND), BorderLayout.CENTER);
+        dialog.setContentPane(root);
+        refresh.run();
+        dialog.setVisible(true);
+    }
+
+    private Component createUserMomentCard(final Moment moment, final JPanel feed, final String username) {
+        BubblePanel card = createCardPanel(SPACE_MD);
+        card.setLayout(new BoxLayout(card, BoxLayout.Y_AXIS));
+        card.setAlignmentX(Component.LEFT_ALIGNMENT);
+        JLabel time = new JLabel(moment.time);
+        time.setFont(UI_FONT_SMALL);
+        time.setForeground(MUTED);
+        JLabel text = new JLabel("<html><div style=\"width:450px;font-size:14px;line-height:1.5;\">" + htmlText(moment.text) + "</div></html>");
+        text.setFont(UI_FONT);
+        text.setForeground(TEXT);
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, SPACE_SM, 0));
+        buttons.setOpaque(false);
+        boolean liked = moment.likes.contains(currentUser);
+        JButton like = createButton(liked ? "取消点赞" : "点赞", false);
+        JButton comment = createButton("评论", false);
+        like.setPreferredSize(new Dimension(liked ? 86 : 58, 30));
+        comment.setPreferredSize(new Dimension(58, 30));
+        like.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) { toggleMomentLike(moment.id); refreshUserMomentFeed(feed, username); }
+        });
+        comment.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) { commentMomentFromDialog(moment, feed, username); }
+        });
+        buttons.add(like);
+        buttons.add(comment);
+        if(moment.author.equalsIgnoreCase(currentUser)) {
+            JButton delete = createButton("删除", false);
+            delete.setPreferredSize(new Dimension(58, 30));
+            delete.addActionListener(new ActionListener() {
+                public void actionPerformed(ActionEvent e) {
+                    int choice = JOptionPane.showConfirmDialog(ChatClient.this, "确定删除这条动态吗？", "删除动态", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+                    if(choice == JOptionPane.YES_OPTION) { deleteMoment(moment.id); refreshUserMomentFeed(feed, username); }
+                }
+            });
+            buttons.add(delete);
+        }
+        card.add(time);
+        card.add(Box.createVerticalStrut(SPACE_SM));
+        card.add(text);
+        card.add(Box.createVerticalStrut(SPACE_SM));
+        card.add(buttons);
+        if(moment.likes.size() > 0 || moment.comments.size() > 0) {
+            card.add(Box.createVerticalStrut(SPACE_XS));
+            card.add(createMomentSocialSummary(moment));
+        }
+        card.setMaximumSize(new Dimension(Integer.MAX_VALUE, card.getPreferredSize().height));
+        return card;
+    }
+
+    private void refreshUserMomentFeed(JPanel feed, String username) {
+        if(feed == null) return;
+        feed.removeAll();
+        java.util.List<Moment> moments = visibleMomentsForAuthor(username);
+        for(int i=0;i<moments.size();i++) {
+            feed.add(createUserMomentCard(moments.get(i), feed, username));
+            feed.add(Box.createVerticalStrut(SPACE_MD));
+        }
+        if(moments.size() == 0) feed.add(createEmptyState("暂无朋友圈动态", "刷新后可查看好友发布过的动态"));
+        feed.revalidate();
+        feed.repaint();
+    }
+
+    private Component createMomentSocialSummary(Moment moment) {
+        BubblePanel panel = new BubblePanel(SURFACE_SOFT, BORDER_LIGHT, RADIUS_MD);
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        panel.setBorder(pad(SPACE_SM));
+        if(moment.likes.size() > 0) {
+            JLabel likes = new JLabel("点赞 " + moment.likes.size() + " · " + membersToCsv(moment.likes));
+            likes.setFont(UI_FONT_SMALL);
+            likes.setForeground(PRIMARY_DARK);
+            panel.add(likes);
+        }
+        for(int i=0;i<moment.comments.size();i++) {
+            MomentComment c = moment.comments.get(i);
+            JLabel line = new JLabel("<html><div style=\"width:430px;\"><b>" + escapeHtml(c.author) + "</b>：" + htmlText(c.text) + "</div></html>");
+            line.setFont(UI_FONT_SMALL);
+            line.setForeground(TEXT);
+            if(i > 0 || moment.likes.size() > 0) panel.add(Box.createVerticalStrut(4));
+            panel.add(line);
+        }
+        return panel;
+    }
+
+    private void commentMomentFromDialog(Moment moment, JPanel feed, String username) {
+        JTextArea area = new JTextArea(4, 24);
+        area.setFont(UI_FONT);
+        area.setLineWrap(true);
+        area.setWrapStyleWord(true);
+        area.setBorder(pad(SPACE_SM));
+        JScrollPane scroll = new JScrollPane(area);
+        scroll.setBorder(new RoundedBorder(BORDER, RADIUS_MD));
+        int option = JOptionPane.showConfirmDialog(this, scroll, "评论", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if(option != JOptionPane.OK_OPTION) return;
+        String text = area.getText().trim();
+        if(text.length() == 0) return;
+        addMomentComment(moment.id, text);
+        refreshUserMomentFeed(feed, username);
+    }
+
+    private Properties loadProfileForUser(String username) {
+        Properties profile = new Properties();
+        profile.setProperty("displayName", username == null ? "" : username);
+        profile.setProperty("signature", "这个人还没有写个性签名。");
+        if(username == null || username.length() == 0) return profile;
+        if(username.equalsIgnoreCase(currentUser) && currentProfile != null) {
+            profile.putAll(currentProfile);
+            return profile;
+        }
+        try {
+            Path profileFile = userDirectory(username).resolve("profile.properties");
+            if(Files.exists(profileFile)) {
+                try(InputStream in = Files.newInputStream(profileFile)) { profile.load(in); }
+            }
+        } catch(Exception e) {}
+        if(profile.getProperty("displayName") == null || profile.getProperty("displayName").trim().length() == 0) profile.setProperty("displayName", username);
+        if(profile.getProperty("signature") == null) profile.setProperty("signature", "这个人还没有写个性签名。");
+        return profile;
+    }
+
+    private Set<String> loadFriendsForUser(String username) {
+        Set<String> result = new HashSet<String>();
+        if(username == null || username.length() == 0) return result;
+        if(username.equalsIgnoreCase(currentUser)) { result.addAll(friends); return result; }
+        try {
+            Path file = userDirectory(username).resolve("friends.txt");
+            if(Files.exists(file)) {
+                java.util.List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+                for(int i=0;i<lines.size();i++) { String f = lines.get(i).trim(); if(f.length() > 0) result.add(f); }
+            }
+        } catch(Exception e) {}
+        return result;
+    }
+
+    private int commonFriendsCount(String username) {
+        Set<String> otherFriends = loadFriendsForUser(username);
+        int count = 0;
+        Iterator<String> it = friends.iterator();
+        while(it.hasNext()) if(otherFriends.contains(it.next())) count++;
+        return count;
+    }
+
+    private int commonGroupsCount(String username) {
+        int count = 0;
+        Iterator<Map.Entry<String, Set<String>>> it = chatGroups.entrySet().iterator();
+        while(it.hasNext()) {
+            Set<String> members = it.next().getValue();
+            if(members != null && members.contains(username)) count++;
+        }
+        return count;
+    }
+
+    private java.util.List<Moment> visibleMomentsForAuthor(String author) {
+        java.util.List<Moment> result = new ArrayList<Moment>();
+        java.util.List<Moment> moments = loadMoments();
+        for(int i=0;i<moments.size();i++) {
+            Moment moment = moments.get(i);
+            if(moment.author != null && moment.author.equalsIgnoreCase(author) && canViewMomentAuthor(moment.author)) result.add(moment);
+        }
+        sortMoments(result);
+        return result;
+    }
+
+    private boolean canViewMomentAuthor(String author) {
+        return author != null && (author.equalsIgnoreCase(currentUser) || friends.contains(author));
+    }
+
+    private void selectConversation(String key) {
+        if(key == null || key.length() == 0 || onlineList == null) return;
+        if(!modelContains(key)) rebuildConversationList(key);
+        if(modelContains(key)) onlineList.setSelectedValue(key, true);
     }
 
     private void showMomentsDialog() {
@@ -2851,6 +3686,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
         MomentsDialog dialog = new MomentsDialog(this);
         dialog.setVisible(true);
+        updateMomentBadge();
     }
 
     private Path momentsFile() {
@@ -2902,15 +3738,18 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
     private void upsertMoment(Moment incoming) {
         java.util.List<Moment> moments = loadMoments();
+        Moment old = null;
         boolean replaced = false;
         for(int i=0;i<moments.size();i++) {
             if(moments.get(i).id.equals(incoming.id)) {
+                old = moments.get(i);
                 moments.set(i, incoming);
                 replaced = true;
                 break;
             }
         }
         if(!replaced) moments.add(incoming);
+        detectMomentNotifications(old, incoming);
         saveMoments(moments);
     }
 
@@ -3112,6 +3951,152 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         if(activeMomentsDialog != null) activeMomentsDialog.refreshFeed();
     }
 
+    private void detectMomentNotifications(Moment oldMoment, Moment incoming) {
+        if(incoming == null || incoming.author == null || !incoming.author.equalsIgnoreCase(currentUser)) return;
+        Set<String> oldLikes = oldMoment == null ? new LinkedHashSet<String>() : oldMoment.likes;
+        Iterator<String> likeIt = incoming.likes.iterator();
+        while(likeIt.hasNext()) {
+            String actor = likeIt.next();
+            if(actor.equalsIgnoreCase(currentUser)) continue;
+            if(!oldLikes.contains(actor)) addMomentNotification(actor, "点赞", clipPreview(incoming.text, 36));
+        }
+        Set<String> oldComments = new HashSet<String>();
+        if(oldMoment != null) {
+            for(int i=0;i<oldMoment.comments.size();i++) oldComments.add(commentFingerprint(oldMoment.comments.get(i)));
+        }
+        for(int i=0;i<incoming.comments.size();i++) {
+            MomentComment c = incoming.comments.get(i);
+            if(c.author.equalsIgnoreCase(currentUser)) continue;
+            if(!oldComments.contains(commentFingerprint(c))) addMomentNotification(c.author, "评论", clipPreview(c.text, 48));
+        }
+    }
+
+    private String commentFingerprint(MomentComment c) {
+        if(c == null) return "";
+        return nullSafe(c.time) + "|" + nullSafe(c.author) + "|" + nullSafe(c.text);
+    }
+
+    private void addMomentNotification(String actor, String action, String detail) {
+        MomentNotification n = new MomentNotification(UUID.randomUUID().toString(),
+                LocalDateTime.now().format(logTime), actor, action, detail, false);
+        momentNotifications.add(0, n);
+        while(momentNotifications.size() > 200) momentNotifications.remove(momentNotifications.size() - 1);
+        saveMomentNotifications();
+        updateMomentBadge();
+    }
+
+    private Path momentNotificationsFile() {
+        return currentUserDir.resolve(MOMENT_NOTIFICATIONS_FILE);
+    }
+
+    private void loadMomentNotifications() {
+        momentNotifications.clear();
+        if(currentUserDir == null) return;
+        Path file = momentNotificationsFile();
+        if(!Files.exists(file)) { updateMomentBadge(); return; }
+        try {
+            java.util.List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+            for(int i=0;i<lines.size();i++) {
+                String[] parts = lines.get(i).split("\\t", 6);
+                if(parts.length == 6) {
+                    momentNotifications.add(new MomentNotification(parts[0], decodeToken(parts[1]), decodeToken(parts[2]),
+                            decodeToken(parts[3]), decodeToken(parts[4]), "1".equals(parts[5])));
+                }
+            }
+        } catch(Exception e) {}
+        updateMomentBadge();
+    }
+
+    private void saveMomentNotifications() {
+        if(currentUserDir == null) return;
+        try {
+            Files.createDirectories(currentUserDir);
+            java.util.List<String> lines = new ArrayList<String>();
+            for(int i=0;i<momentNotifications.size();i++) {
+                MomentNotification n = momentNotifications.get(i);
+                lines.add(n.id + "\t" + encodeToken(n.time) + "\t" + encodeToken(n.actor) + "\t"
+                        + encodeToken(n.action) + "\t" + encodeToken(n.detail) + "\t" + (n.read ? "1" : "0"));
+            }
+            Files.write(momentNotificationsFile(), lines, StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+        } catch(Exception e) {}
+    }
+
+    private int unreadMomentNotificationCount() {
+        int count = 0;
+        for(int i=0;i<momentNotifications.size();i++) if(!momentNotifications.get(i).read) count++;
+        return count;
+    }
+
+    private void updateMomentBadge() {
+        if(buttonMoments instanceof RailButton) ((RailButton)buttonMoments).setBadgeCount(unreadMomentNotificationCount());
+    }
+
+    private void showMomentNotificationsDialog(Component parent) {
+        final JDialog dialog = new JDialog(this, "朋友圈消息", true);
+        dialog.setDefaultCloseOperation(DISPOSE_ON_CLOSE);
+        dialog.setSize(460, 520);
+        dialog.setLocationRelativeTo(parent == null ? this : parent);
+        JPanel root = new JPanel(new BorderLayout(SPACE_MD, SPACE_MD));
+        root.setBackground(CHAT_BACKGROUND);
+        root.setBorder(pad(SPACE_LG));
+        JPanel header = new JPanel(new BorderLayout());
+        header.setOpaque(false);
+        JLabel title = new JLabel("朋友圈消息");
+        title.setFont(PAGE_TITLE_FONT);
+        title.setForeground(TEXT);
+        JButton readAll = createButton("全部已读", false);
+        readAll.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                for(int i=0;i<momentNotifications.size();i++) momentNotifications.get(i).read = true;
+                saveMomentNotifications();
+                updateMomentBadge();
+                dialog.dispose();
+            }
+        });
+        header.add(title, BorderLayout.WEST);
+        header.add(readAll, BorderLayout.EAST);
+        root.add(header, BorderLayout.NORTH);
+        JPanel list = new JPanel();
+        list.setBackground(CHAT_BACKGROUND);
+        list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
+        if(momentNotifications.size() == 0) {
+            list.add(createEmptyState("暂无互动消息", "别人点赞或评论你的朋友圈后会显示在这里"));
+        } else {
+            for(int i=0;i<momentNotifications.size();i++) list.add(createMomentNotificationRow(momentNotifications.get(i)));
+        }
+        root.add(createModernScrollPane(list, CHAT_BACKGROUND), BorderLayout.CENTER);
+        dialog.setContentPane(root);
+        dialog.setVisible(true);
+    }
+
+    private Component createMomentNotificationRow(MomentNotification n) {
+        BubblePanel row = createCardPanel(SPACE_MD);
+        row.setLayout(new BorderLayout(SPACE_MD, 0));
+        row.setAlignmentX(Component.LEFT_ALIGNMENT);
+        row.add(new AvatarView(n.actor, false), BorderLayout.WEST);
+        JPanel text = new JPanel();
+        text.setOpaque(false);
+        text.setLayout(new BoxLayout(text, BoxLayout.Y_AXIS));
+        JLabel title = new JLabel(n.actor + " " + n.action + "了你的朋友圈" + (n.read ? "" : "  ●"));
+        title.setFont(UI_FONT_BOLD);
+        title.setForeground(n.read ? TEXT : PRIMARY_DARK);
+        JLabel detail = new JLabel("<html><div style=\"width:310px;\">" + htmlText(n.detail) + "</div></html>");
+        detail.setFont(UI_FONT_SMALL);
+        detail.setForeground(MUTED);
+        JLabel time = new JLabel(n.time);
+        time.setFont(new Font("Microsoft YaHei UI", Font.PLAIN, 11));
+        time.setForeground(SOFT_MUTED);
+        text.add(title);
+        text.add(Box.createVerticalStrut(SPACE_XS));
+        text.add(detail);
+        text.add(Box.createVerticalStrut(SPACE_XS));
+        text.add(time);
+        row.add(text, BorderLayout.CENTER);
+        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 92));
+        return row;
+    }
+
     private void sortMoments(java.util.List<Moment> moments) {
         Collections.sort(moments, new Comparator<Moment>() {
             public int compare(Moment a, Moment b) {
@@ -3173,8 +4158,12 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                 || plain.contains(FRIEND_REQUEST_PREFIX)
                 || plain.contains(FRIEND_ACCEPT_PREFIX)
                 || plain.contains(FRIEND_REJECT_PREFIX)
+                || plain.contains(FRIEND_DELETE_PREFIX)
                 || plain.contains(GROUP_INVITE_PREFIX)
                 || plain.contains(GROUP_MESSAGE_PREFIX)
+                || plain.contains(GROUP_KICK_PREFIX)
+                || plain.contains(GROUP_LEAVE_PREFIX)
+                || plain.contains(MESSAGE_RECALL_PREFIX)
                 || plain.contains(MOMENT_SYNC_REQUEST_PREFIX)
                 || plain.contains(MOMENT_SYNC_ITEM_PREFIX)
                 || plain.contains(MOMENT_DELETE_PREFIX)
@@ -3202,8 +4191,19 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     }
 
     private void chooseAttachment(String title, FileNameExtensionFilter filter, String requiredType) {
-        String target = requireOnlinePrivateTarget("发送文件");
-        if(target == null) return;
+        if(ck == null || !ck.isConnected()) {
+            showInlineNotice("请先连接服务器后再发送附件。", DANGER);
+            return;
+        }
+        String selected = selectedConversationKey();
+        if(selected == null) {
+            showInlineNotice("请先选择会话。", DANGER);
+            return;
+        }
+        if(selectedChatTarget != null && !friends.contains(selectedChatTarget)) {
+            showInlineNotice("非好友不能发送附件，请先添加好友。", DANGER);
+            return;
+        }
         JFileChooser chooser = new JFileChooser();
         chooser.setDialogTitle(title);
         chooser.setCurrentDirectory(new File(System.getProperty("user.home"), "Desktop"));
@@ -3222,13 +4222,24 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     }
 
     private void recordAndSendVoice() {
-        String target = requireOnlinePrivateTarget("录制语音");
-        if(target == null) return;
-        VoiceRecorderDialog dialog = new VoiceRecorderDialog(this, target);
+        if(ck == null || !ck.isConnected()) {
+            showInlineNotice("请先连接服务器后再录制语音。", DANGER);
+            return;
+        }
+        String selected = selectedConversationKey();
+        if(selected == null) {
+            showInlineNotice("请先选择会话。", DANGER);
+            return;
+        }
+        if(selectedChatTarget != null && !friends.contains(selectedChatTarget)) {
+            showInlineNotice("非好友不能发送语音。", DANGER);
+            return;
+        }
+        VoiceRecorderDialog dialog = new VoiceRecorderDialog(this, displayConversationName(selected));
         dialog.setVisible(true);
         File voiceFile = dialog.getVoiceFileToSend();
         if(voiceFile != null && validateAttachment(voiceFile)) {
-            sendFileTo(target, voiceFile);
+            sendFileInCurrentConversation(voiceFile);
         }
     }
 
@@ -3293,12 +4304,12 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         if(pendingFile == null) {
             attachmentPanel.setVisible(false);
         } else {
-            String target = getSelectedPrivateTarget();
+            String selected = selectedConversationKey();
             String type = attachmentTypeLabel(pendingFile.getName());
             if(attachmentIconLabel != null) attachmentIconLabel.setText(type);
             attachmentNameLabel.setText(pendingFile.getName());
             attachmentMetaLabel.setText(type + " · " + displayFileSize(pendingFile.length()) + " · "
-                    + (target == null ? "请选择联系人后发送" : "发送给 " + target));
+                    + (selected == null ? "请选择会话后发送" : "发送到 " + displayConversationName(selected)));
             attachmentPanel.setVisible(true);
         }
         if(southPanel != null) {
@@ -3306,6 +4317,13 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             southPanel.repaint();
         }
         updateSendButtonState();
+    }
+
+    private boolean attachmentAllowedInCurrentConversation() {
+        String selected = selectedConversationKey();
+        if(selected == null) return false;
+        if(selectedChatTarget != null) return friends.contains(selectedChatTarget);
+        return isBroadcastConversation(selected) || selectedGroupName != null;
     }
 
     private void updateSendButtonState() {
@@ -3317,8 +4335,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         boolean hasConversation = onlineList != null && onlineList.getSelectedValue() != null;
         boolean connected = ck != null && ck.isConnected();
         boolean textWithinLimit = textLength <= MESSAGE_TEXT_LIMIT;
-        boolean attachmentTargetReady = !hasFile
-                || (selectedChatTarget != null && visibleUsers.contains(selectedChatTarget));
+        boolean attachmentTargetReady = !hasFile || attachmentAllowedInCurrentConversation();
         boolean ready = connected && hasConversation && (hasText || hasFile)
                 && attachmentTargetReady && textWithinLimit;
         buttonSend.setEnabled(ready);
@@ -3327,7 +4344,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             if(ready) buttonSend.setToolTipText("发送到当前会话");
             else if(!connected) buttonSend.setToolTipText("请先连接服务器");
             else if(!hasConversation) buttonSend.setToolTipText("请先选择会话");
-            else if(hasFile && !attachmentTargetReady) buttonSend.setToolTipText("附件只能发送给在线联系人");
+            else if(hasFile && !attachmentTargetReady) buttonSend.setToolTipText("当前会话不能发送附件");
             else if(!textWithinLimit) buttonSend.setToolTipText("消息过长，请删减后发送");
             else buttonSend.setToolTipText("输入内容后发送");
         }
@@ -3346,7 +4363,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             composerHintLabel.setText("选择一个会话");
             composerHintLabel.setForeground(MUTED);
         } else if(hasFile && !attachmentTargetReady) {
-            composerHintLabel.setText("附件需要发送给在线联系人");
+            composerHintLabel.setText("当前会话不能发送附件");
             composerHintLabel.setForeground(WARNING);
         } else if(!textWithinLimit) {
             composerHintLabel.setText("消息过长，请删减到 " + MESSAGE_TEXT_LIMIT + " 字以内");
@@ -3431,6 +4448,11 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     }
 
     private void sendPrivate(String target, String message) {
+        if(!friends.contains(target)) {
+            showFailedOutgoingMessage(target, ownNick(), message, "非好友，消息未发送");
+            showInlineNotice("非好友不能发送消息，请先添加好友。", DANGER);
+            return;
+        }
         String messageId = newMessageId();
         String time = LocalDateTime.now().format(displayTime);
         boolean online = visibleUsers.contains(target);
@@ -3458,6 +4480,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                 sender, message, time), conversationKey);
         chatMessage.messageId = messageId;
         chatMessage.deliveryStatus = status;
+        chatMessage.sentAtMillis = System.currentTimeMillis();
         trackedOutgoingMessages.put(messageId, chatMessage);
         return chatMessage;
     }
@@ -3477,7 +4500,18 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         return true;
     }
 
+    private void showFailedOutgoingMessage(final String conversationKey, final String sender, final String message, final String reason) {
+        final ChatMessage failed = withConversation(new ChatMessage(MessageKind.OUTGOING, sender, message, LocalDateTime.now().format(displayTime)), conversationKey);
+        failed.deliveryStatus = reason == null ? "发送失败" : reason;
+        Runnable show = new Runnable() {
+            public void run() { if(historyWindow != null) historyWindow.addMessage(failed); }
+        };
+        if(SwingUtilities.isEventDispatchThread()) show.run();
+        else SwingUtilities.invokeLater(show);
+    }
+
     private void showOutgoingTextMessage(final ChatMessage chatMessage) {
+        if(chatMessage != null && chatMessage.sentAtMillis == 0L) chatMessage.sentAtMillis = System.currentTimeMillis();
         Runnable show = new Runnable() {
             public void run() {
                 if(historyWindow != null) {
@@ -3494,6 +4528,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         ck.sendMessage(message);
         ChatMessage chatMessage = withConversation(new ChatMessage(MessageKind.OUTGOING,
                 ownNick(), message, LocalDateTime.now().format(displayTime)), BROADCAST_CHAT);
+        chatMessage.messageId = newMessageId();
+        chatMessage.sentAtMillis = System.currentTimeMillis();
         if(historyWindow != null) historyWindow.addMessage(chatMessage);
         appendLog("[broadcast] " + message);
     }
@@ -3504,8 +4540,9 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             addMsg("<font color=\"#ff0000\">群聊成员为空，请重新建群。</font>");
             return false;
         }
+        String messageId = newMessageId();
         String payload = GROUP_MESSAGE_PREFIX + encodeToken(groupName) + "|"
-                + encodeToken(message);
+                + encodeToken(messageId) + "|" + encodeToken(message);
         int sentCount = 0;
         int queuedCount = 0;
         java.util.List<String> offline = new ArrayList<String>();
@@ -3524,6 +4561,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
         ChatMessage chatMessage = withConversation(new ChatMessage(MessageKind.OUTGOING,
                 ownNick() + " / " + groupName, message, LocalDateTime.now().format(displayTime)), groupLabel(groupName));
+        chatMessage.messageId = messageId;
+        chatMessage.sentAtMillis = System.currentTimeMillis();
         if(queuedCount > 0) {
             chatMessage.deliveryStatus = sentCount > 0 ? "部分待发送" : "待发送";
         } else {
@@ -3538,25 +4577,31 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         return true;
     }
 
+    private boolean sendFileInCurrentConversation(File file) {
+        if(selectedGroupName != null) return sendFileToGroup(selectedGroupName, file);
+        if(selectedChatTarget != null) return sendFileTo(selectedChatTarget, file);
+        return sendFileToBroadcast(file);
+    }
+
     private boolean sendFileTo(String target, File file) {
+        if(!friends.contains(target)) {
+            showFailedOutgoingMessage(target, ownNick(), "[文件] " + (file == null ? "" : file.getName()), "非好友，文件未发送");
+            showInlineNotice("非好友不能发送文件，请先添加好友。", DANGER);
+            return false;
+        }
         try {
-            if(ck == null || !ck.isConnected()) {
-                addMsg("<font color=\"#ff0000\">请先连接服务器。</font>");
-                return false;
-            }
-            if(!file.exists() || !file.isFile()) {
-                addMsg("<font color=\"#ff0000\">没有找到文件：" + escapeHtml(file.getPath()) + "</font>");
-                return false;
-            }
-            byte[] data = Files.readAllBytes(file.toPath());
-            if(data.length > MAX_FILE_BYTES) {
-                addMsg("<font color=\"#ff0000\">文件超过 " + displayFileSize(MAX_FILE_BYTES) + " 限制。</font>");
-                return false;
-            }
+            byte[] data = readFileDataForSending(file);
+            if(data == null) return false;
+            String wireName = file.getName();
             String encoded = Base64.getEncoder().encodeToString(data);
-            ck.sendMessage("/file " + target + " " + file.getName() + " " + encoded);
+            if(ck != null && ck.isConnected() && visibleUsers.contains(target)) {
+                ck.sendMessage("/file " + target + " " + wireName + " " + encoded);
+            } else {
+                queuePendingFileDelivery(target, wireName, encoded, "私聊文件：" + file.getName());
+                showInlineNotice("好友离线，文件已加入待发送队列。", WARNING);
+            }
             appendLog("[file to " + target + "] " + file.getName() + " (" + data.length + " bytes)");
-            showOutgoingFileMessage(target, file.getName(), data);
+            showOutgoingFileMessage(target, ownNick() + " → " + target, file.getName(), data);
             return true;
         } catch(Exception e) {
             addMsg("<font color=\"#ff0000\">文件发送失败：" + escapeHtml(e.getMessage()) + "</font>");
@@ -3564,8 +4609,94 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
     }
 
-    private void showOutgoingFileMessage(final String target, final String fileName, final byte[] data) {
-        final String sender = ownNick() + " → " + target;
+    private boolean sendFileToGroup(String groupName, File file) {
+        Set<String> members = chatGroups.get(groupName);
+        if(members == null || members.size() <= 1) {
+            showInlineNotice("群聊成员为空，请重新建群。", DANGER);
+            return false;
+        }
+        try {
+            byte[] data = readFileDataForSending(file);
+            if(data == null) return false;
+            String encoded = Base64.getEncoder().encodeToString(data);
+            String wireName = encodeGroupFileName(groupName, file.getName());
+            int count = 0;
+            Iterator<String> it = members.iterator();
+            while(it.hasNext()) {
+                String member = it.next();
+                if(member.equalsIgnoreCase(ownNick())) continue;
+                if(ck != null && ck.isConnected() && visibleUsers.contains(member)) {
+                    ck.sendMessage("/file " + member + " " + wireName + " " + encoded);
+                } else {
+                    queuePendingFileDelivery(member, wireName, encoded, "群聊文件：" + groupName + "/" + file.getName());
+                }
+                count++;
+            }
+            showOutgoingFileMessage(groupLabel(groupName), ownNick() + " / " + groupName, file.getName(), data);
+            appendLog("[group file " + groupName + "] " + file.getName() + " to " + count + " members");
+            return true;
+        } catch(Exception e) {
+            showInlineNotice("群文件发送失败：" + e.getMessage(), DANGER);
+            return false;
+        }
+    }
+
+    private boolean sendFileToBroadcast(File file) {
+        try {
+            byte[] data = readFileDataForSending(file);
+            if(data == null) return false;
+            String encoded = Base64.getEncoder().encodeToString(data);
+            String wireName = encodeBroadcastFileName(file.getName());
+            int count = 0;
+            Iterator<String> it = visibleUsers.iterator();
+            while(it.hasNext()) {
+                String user = it.next();
+                if(user.equalsIgnoreCase(ownNick())) continue;
+                ck.sendMessage("/file " + user + " " + wireName + " " + encoded);
+                count++;
+            }
+            showOutgoingFileMessage(BROADCAST_CHAT, ownNick(), file.getName(), data);
+            appendLog("[broadcast file] " + file.getName() + " to " + count + " users");
+            return true;
+        } catch(Exception e) {
+            showInlineNotice("广播文件发送失败：" + e.getMessage(), DANGER);
+            return false;
+        }
+    }
+
+    private byte[] readFileDataForSending(File file) throws IOException {
+        if(file == null || !file.exists() || !file.isFile()) {
+            showInlineNotice("没有找到文件。", DANGER);
+            return null;
+        }
+        byte[] data = Files.readAllBytes(file.toPath());
+        if(data.length > MAX_FILE_BYTES) {
+            showInlineNotice("文件超过 " + displayFileSize(MAX_FILE_BYTES) + " 限制。", DANGER);
+            return null;
+        }
+        return data;
+    }
+
+    private void queuePendingFileDelivery(String target, String wireName, String encoded, String note) {
+        queuePendingDelivery(target, PENDING_FILE_PREFIX + encodeToken(wireName) + "|" + encodeToken(encoded), note);
+    }
+
+    private String encodeGroupFileName(String groupName, String original) {
+        return GROUP_FILE_PREFIX + encodeToken(groupName).replace("=", "_") + "__" + encodeToken(original).replace("=", "_");
+    }
+
+    private String encodeBroadcastFileName(String original) {
+        return BROADCAST_FILE_PREFIX + encodeToken(original).replace("=", "_");
+    }
+
+    private String restoreTokenPadding(String token) {
+        String raw = token == null ? "" : token.replace('_', '=');
+        int mod = raw.length() % 4;
+        if(mod != 0) raw += "====".substring(mod);
+        return raw;
+    }
+
+    private void showOutgoingFileMessage(final String target, final String sender, final String fileName, final byte[] data) {
         final String time = LocalDateTime.now().format(displayTime);
         Runnable show = new Runnable() {
             public void run() {
@@ -3573,6 +4704,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                     ChatMessage message = ChatMessage.file(MessageKind.OUTGOING, sender,
                             fileName, data.length, data, time);
                     message.conversationKey = target;
+                    message.sentAtMillis = System.currentTimeMillis();
                     historyWindow.addMessage(message);
                 }
             }
@@ -3679,6 +4811,12 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         return 4;
     }
 
+    private String displayConversationName(String value) {
+        if(value == null) return "";
+        if(isGroupConversation(value)) return groupNameFromLabel(value);
+        return value;
+    }
+
     private String displayConversationNameForSort(String value) {
         if(isGroupConversation(value)) return groupNameFromLabel(value);
         return value == null ? "" : value;
@@ -3725,11 +4863,13 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             }
         }
 
-        Iterator<String> friendIt = friends.iterator();
-        while(friendIt.hasNext()) {
-            String friend = friendIt.next();
-            if(nextUsers.contains(friend) && !visibleUsers.contains(friend)) {
-                addMsg("<font color=\"#cc6600\">好友上线：" + escapeHtml(friend) + "</font>");
+        Iterator<String> userIt = nextUsers.iterator();
+        while(userIt.hasNext()) {
+            String user = userIt.next();
+            if(user.length() > 0 && !user.equalsIgnoreCase(ownNick()) && !visibleUsers.contains(user)) {
+                ChatMessage notice = withConversation(new ChatMessage(MessageKind.SYSTEM, "系统",
+                        user + " 上线了", LocalDateTime.now().format(displayTime)), BROADCAST_CHAT);
+                if(historyWindow != null) historyWindow.addMessage(notice);
             }
         }
         visibleUsers = nextUsers;
@@ -3750,11 +4890,32 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
     public void receiveFile(String sender, String filename, String base64) {
         try {
+            String conversationKey = sender;
+            String displayName = filename;
+            String displaySender = sender;
+            if(filename != null && filename.startsWith(GROUP_FILE_PREFIX)) {
+                int sep = filename.indexOf("__", GROUP_FILE_PREFIX.length());
+                if(sep > 0) {
+                    String groupName = decodeToken(restoreTokenPadding(filename.substring(GROUP_FILE_PREFIX.length(), sep)));
+                    displayName = decodeToken(restoreTokenPadding(filename.substring(sep + 2)));
+                    conversationKey = groupLabel(groupName);
+                    displaySender = sender + " / " + groupName;
+                    Set<String> members = chatGroups.get(groupName);
+                    if(members == null || !members.contains(ownNick())) return;
+                }
+            } else if(filename != null && filename.startsWith(BROADCAST_FILE_PREFIX)) {
+                displayName = decodeToken(restoreTokenPadding(filename.substring(BROADCAST_FILE_PREFIX.length())));
+                conversationKey = BROADCAST_CHAT;
+            } else if(!friends.contains(sender)) {
+                showInlineNotice("收到非好友 " + sender + " 的文件，已拦截。", DANGER);
+                appendLog("[blocked file from " + sender + "] " + filename);
+                return;
+            }
             byte[] data = Base64.getDecoder().decode(base64);
-            appendLog("[file from " + sender + "] " + filename + " (" + data.length + " bytes)");
-            ChatMessage message = ChatMessage.file(MessageKind.INCOMING, sender,
-                    filename, data.length, data, LocalDateTime.now().format(displayTime));
-            message.conversationKey = sender;
+            appendLog("[file from " + sender + "] " + displayName + " (" + data.length + " bytes)");
+            ChatMessage message = ChatMessage.file(MessageKind.INCOMING, displaySender,
+                    displayName, data.length, data, LocalDateTime.now().format(displayTime));
+            message.conversationKey = conversationKey;
             historyWindow.addMessage(message);
         } catch(Exception e) {
             addMsg("<font color=\"#ff0000\">接收文件失败：" + escapeHtml(e.getMessage()) + "</font>");
@@ -3949,6 +5110,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, SPACE_SM, 0));
             actions.setOpaque(false);
             JButton refreshButton = smallButton("刷新");
+            JButton messageButton = smallButton("消息");
             JButton composeButton = createButton("发布动态", true);
             composeButton.setPreferredSize(new Dimension(96, BUTTON_HEIGHT));
             refreshButton.addActionListener(new ActionListener() {
@@ -3964,7 +5126,14 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                     MomentsDialog.this.revalidate();
                 }
             });
+            messageButton.addActionListener(new ActionListener() {
+                public void actionPerformed(ActionEvent e) {
+                    showMomentNotificationsDialog(MomentsDialog.this);
+                    refreshFeed();
+                }
+            });
             actions.add(refreshButton);
+            actions.add(messageButton);
             actions.add(composeButton);
             titleRow.add(title, BorderLayout.WEST);
             titleRow.add(actions, BorderLayout.EAST);
@@ -5781,6 +6950,12 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
     class RailButton extends JButton {
         private boolean hover = false;
+        private int badgeCount = 0;
+
+        void setBadgeCount(int count) {
+            this.badgeCount = Math.max(0, count);
+            repaint();
+        }
 
         RailButton(String text) {
             super(text);
@@ -5817,6 +6992,19 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                 setForeground(PRIMARY_DARK);
             } else {
                 setForeground(new Color(74, 80, 92));
+            }
+            if(badgeCount > 0) {
+                String badgeText = badgeCount > 99 ? "99+" : String.valueOf(badgeCount);
+                g2.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 10));
+                FontMetrics fm = g2.getFontMetrics();
+                int h = 18;
+                int w = badgeText.length() == 1 ? h : Math.max(h, fm.stringWidth(badgeText) + 10);
+                int x = getWidth() - w - 4;
+                int y = 3;
+                g2.setColor(new Color(250, 81, 81));
+                g2.fillRoundRect(x, y, w, h, h, h);
+                g2.setColor(Color.WHITE);
+                g2.drawString(badgeText, x + (w - fm.stringWidth(badgeText)) / 2, y + (h + fm.getAscent() - fm.getDescent()) / 2 - 1);
             }
             g2.dispose();
             super.paintComponent(g);
@@ -5973,7 +7161,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                 sampleRate, 16, channels, channels * 2, sampleRate, false);
     }
 
-    private String fileExtension(String name) {
+    private String audioFileExtension(String name) {
         String value = name == null ? "" : name.trim();
         int dot = value.lastIndexOf('.');
         if(dot < 0 || dot == value.length() - 1) return ".audio";
@@ -5990,7 +7178,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                     ? currentUserDir.resolve("voice-playback")
                     : Paths.get(System.getProperty("java.io.tmpdir"), "cncd-chat-voice-playback");
             Files.createDirectories(dir);
-            Path temp = Files.createTempFile(dir, "voice_", fileExtension(message.fileName));
+            Path temp = Files.createTempFile(dir, "voice_", audioFileExtension(message.fileName));
             Files.write(temp, message.fileData);
             temp.toFile().deleteOnExit();
             Desktop.getDesktop().open(temp.toFile());
@@ -6239,7 +7427,9 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             if(count <= 0) return new Dimension(0, 18);
             String text = count > 99 ? "99+" : String.valueOf(count);
             FontMetrics fm = getFontMetrics(getFont());
-            return new Dimension(Math.max(18, fm.stringWidth(text) + 10), 18);
+            int size = 18;
+            if(text.length() == 1) return new Dimension(size, size);
+            return new Dimension(Math.max(size, fm.stringWidth(text) + 10), size);
         }
 
         protected void paintComponent(Graphics g) {
@@ -6549,6 +7739,15 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                 return createFileBubbleBlock(message, outgoing, name);
             }
 
+            if(message.recalled) {
+                JLabel recalled = new JLabel(message.body == null ? "已撤回一条消息" : message.body);
+                recalled.setFont(CHAT_TEXT_SMALL_FONT);
+                recalled.setForeground(MUTED);
+                recalled.setAlignmentX(outgoing ? Component.RIGHT_ALIGNMENT : Component.LEFT_ALIGNMENT);
+                block.add(recalled);
+                return block;
+            }
+
             JLabel text = new JLabel("<html><div style=\"width:" + messageWidth(message.body)
                     + "px;\">" + htmlText(message.body) + "</div></html>");
             text.setFont(CHAT_TEXT_FONT);
@@ -6564,11 +7763,31 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             bubble.setMaximumSize(new Dimension(bubbleSize.width, bubbleSize.height));
             bubble.setAlignmentX(outgoing ? Component.RIGHT_ALIGNMENT : Component.LEFT_ALIGNMENT);
 
+            if(outgoing) installRecallPopup(bubble, message);
+
             block.add(name);
             block.add(Box.createVerticalStrut(SPACE_XS));
             block.add(bubble);
             block.setMaximumSize(new Dimension(470, block.getPreferredSize().height));
             return block;
+        }
+
+        private void installRecallPopup(final JComponent component, final ChatMessage message) {
+            component.addMouseListener(new MouseAdapter() {
+                private void showMenu(MouseEvent e) {
+                    if(!e.isPopupTrigger()) return;
+                    JPopupMenu menu = new JPopupMenu();
+                    JMenuItem recall = new JMenuItem("撤回");
+                    recall.setEnabled(canRecallMessage(message));
+                    recall.addActionListener(new ActionListener() {
+                        public void actionPerformed(ActionEvent ae) { recallOwnMessage(message); }
+                    });
+                    menu.add(recall);
+                    menu.show(component, e.getX(), e.getY());
+                }
+                public void mousePressed(MouseEvent e) { showMenu(e); }
+                public void mouseReleased(MouseEvent e) { showMenu(e); }
+            });
         }
 
         private int messageWidth(String body) {
@@ -7011,12 +8230,21 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     class AvatarView extends JComponent {
         private String name;
         private boolean outgoing;
+        private int avatarSize = 36;
 
         AvatarView(String name, boolean outgoing) {
             setAvatar(name, outgoing);
-            setPreferredSize(new Dimension(36, 36));
-            setMinimumSize(new Dimension(36, 36));
-            setMaximumSize(new Dimension(36, 36));
+            setAvatarSize(36);
+        }
+
+        public void setAvatarSize(int size) {
+            avatarSize = Math.max(28, size);
+            Dimension d = new Dimension(avatarSize, avatarSize);
+            setPreferredSize(d);
+            setMinimumSize(d);
+            setMaximumSize(d);
+            revalidate();
+            repaint();
         }
 
         public void setAvatar(String name, boolean outgoing) {
@@ -7028,15 +8256,24 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         protected void paintComponent(Graphics g) {
             Graphics2D g2 = (Graphics2D)g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            Color fill = outgoing ? PRIMARY : avatarColor(name);
             int size = Math.min(getWidth(), getHeight()) - 2;
-            if(size <= 0) {
-                g2.dispose();
-                return;
-            }
+            if(size <= 0) { g2.dispose(); return; }
             int x0 = (getWidth() - size) / 2;
             int y0 = (getHeight() - size) / 2;
             int radius = Math.max(RADIUS_MD, size / 4);
+            BufferedImage avatarImage = loadAvatarImage(name);
+            if(avatarImage != null) {
+                Shape oldClip = g2.getClip();
+                RoundRectangle2D.Float clip = new RoundRectangle2D.Float(x0, y0, size, size, radius, radius);
+                g2.setClip(clip);
+                g2.drawImage(avatarImage, x0, y0, size, size, null);
+                g2.setClip(oldClip);
+                g2.setColor(new Color(255, 255, 255, 80));
+                g2.drawRoundRect(x0 + 1, y0 + 1, size - 2, size - 2, radius, radius);
+                g2.dispose();
+                return;
+            }
+            Color fill = outgoing ? PRIMARY : avatarColor(name);
             g2.setColor(fill);
             g2.fillRoundRect(x0, y0, size, size, radius, radius);
             g2.setColor(new Color(255, 255, 255, 70));
@@ -7051,8 +8288,22 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             g2.dispose();
         }
 
+        private BufferedImage loadAvatarImage(String source) {
+            try {
+                Properties profile = loadProfileForUser(source);
+                if(!"image".equals(profile.getProperty("avatarMode", "letter"))) return null;
+                String path = profile.getProperty("avatarPath", "");
+                if(path.length() == 0) return null;
+                File file = new File(path);
+                if(!file.exists()) return null;
+                return ImageIO.read(file);
+            } catch(Exception e) {
+                return null;
+            }
+        }
+
         private String avatarText(String source) {
-            String trimmed = source.trim();
+            String trimmed = source == null ? "" : source.trim();
             if(trimmed.length() == 0) return "?";
             return trimmed.substring(0, 1).toUpperCase();
         }
