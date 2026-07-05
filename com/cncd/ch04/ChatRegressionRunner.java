@@ -79,6 +79,11 @@ public class ChatRegressionRunner {
                     scenarioProtocolFilter();
                 }
             });
+            runScenario("H 连接健康监控", new Scenario() {
+                public void run() throws Exception {
+                    scenarioConnectionHealth();
+                }
+            });
 
             if(failureCount > 0) {
                 System.out.println("FAILED: " + failureCount + " regression scenario(s)");
@@ -449,6 +454,73 @@ public class ChatRegressionRunner {
         assertTrue(!history.contains("__VIDEO_CALL__"), "Raw video protocol must be hidden");
         assertTrue(!history.contains("__READ__"), "Raw read receipt protocol must be hidden");
         captureClients("protocol_filter.png", "G protocol filter", ctx.alice);
+    }
+
+    private static void scenarioConnectionHealth() throws Exception {
+        final Context ctx = startContext("connectionHealth", "AliceRegression8", "BobRegression8");
+        openPair(ctx, true);
+        final String afterReconnect = "message after reconnect regression";
+
+        onEdt(new Runnable() {
+            public void run() {
+                selectConversation(ctx.alice, ctx.bobName);
+                try {
+                    ((JTextComponent) field(ctx.alice, "msgWindow")).setText("blocked while disconnected");
+                    invoke(ctx.alice, "updateSendButtonState", new Class[0], new Object[0]);
+                } catch(Exception e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        });
+        assertTrue(((JButton) field(ctx.alice, "buttonSend")).isEnabled(),
+                "Send button should be enabled before simulated disconnect");
+
+        ClientKernel kernel = (ClientKernel) field(ctx.alice, "ck");
+        kernel.dropMe();
+
+        waitFor(new Condition() {
+            public boolean ok() throws Exception {
+                String status = labelText(ctx.alice, "statusLabel");
+                String hint = labelText(ctx.alice, "composerHintLabel");
+                return status.contains("断开")
+                        && hint.contains("未连接")
+                        && !((JButton) field(ctx.alice, "buttonSend")).isEnabled()
+                        && !visibleUsers(ctx.alice).contains(ctx.bobName);
+            }
+        }, "client detects disconnected socket and disables sending", 8000);
+        captureClients("connection_lost.png", "H connection lost", ctx.alice, ctx.bob);
+
+        onEdt(new Runnable() {
+            public void run() {
+                invoke(ctx.alice, "connect", new Class[0], new Object[0]);
+                selectConversation(ctx.alice, ctx.bobName);
+                try {
+                    ((JTextComponent) field(ctx.alice, "msgWindow")).setText("");
+                } catch(Exception e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        });
+        waitFor(new Condition() {
+            public boolean ok() throws Exception {
+                return isConnected(ctx.alice) && visibleUsers(ctx.alice).contains(ctx.bobName);
+            }
+        }, "client reconnects after detected disconnect", 8000);
+
+        onEdt(new Runnable() {
+            public void run() {
+                selectConversation(ctx.alice, ctx.bobName);
+                selectConversation(ctx.bob, ctx.aliceName);
+                ctx.alice.demoPrivate(ctx.bobName, afterReconnect);
+            }
+        });
+        waitFor(new Condition() {
+            public boolean ok() throws Exception {
+                return messageCount(ctx.alice, ctx.bobName, afterReconnect) == 1
+                        && messageCount(ctx.bob, ctx.aliceName, afterReconnect) == 1;
+            }
+        }, "private chat works after reconnect", 7000);
+        captureClients("connection_recovered.png", "H connection recovered", ctx.alice, ctx.bob);
     }
 
     private static Context startContext(String id, String aliceName, String bobName) throws Exception {

@@ -50,6 +50,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private static final int CALL_VIDEO_WIDTH = 320;
     private static final int CALL_VIDEO_HEIGHT = 180;
     private static final int CALL_VIDEO_INTERVAL_MS = 650;
+    private static final int HEALTH_CHECK_INTERVAL_MS = 2500;
+    private static final int USER_REFRESH_INTERVAL_MS = 6000;
     private static final String ACCOUNT_FILE = "accounts.properties";
     private static final String LOGIN_PREF_FILE = "login.properties";
     private static final String MOMENTS_FILE = "moments.txt";
@@ -179,6 +181,10 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private Path logFile;
     private DateTimeFormatter displayTime = DateTimeFormatter.ofPattern("HH:mm:ss");
     private DateTimeFormatter logTime = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private javax.swing.Timer healthTimer;
+    private boolean connectionWasHealthy = false;
+    private boolean connectionLossReported = false;
+    private long lastUserRefreshAt = 0;
 
     private enum MessageKind {
         INCOMING,
@@ -315,6 +321,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         uiInit();
         txtHost.setText("127.0.0.1");
         txtPort.setText("3500");
+        startHealthMonitor();
     }
 
     public void uiInit() {
@@ -1580,6 +1587,9 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                             + "，本地端口 " + ck.getLocalPort());
                 }
                 setTitle(appName + " - " + txtNick.getText());
+                connectionWasHealthy = true;
+                connectionLossReported = false;
+                lastUserRefreshAt = 0;
                 addMsg("<font color=\"#008000\">已连接到聊天服务器。</font>");
                 appendLog("[connection] connected to " + host + ":" + port
                         + ", local port " + ck.getLocalPort());
@@ -1587,6 +1597,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                 uploadOwnMomentsToServer();
             } else {
                 String detail = ck.getLastErrorMessage();
+                connectionWasHealthy = false;
                 setConnectionStatus("连接失败，请检查服务端、防火墙和端口", DANGER);
                 showInlineNotice("连接失败：服务端未启动、IP/端口错误或防火墙未放行。", DANGER);
                 appendLog("[connection failed] "
@@ -1598,6 +1609,71 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             appendLog("[connection error] " + e.getMessage());
             e.printStackTrace();
         }
+    }
+
+    private void startHealthMonitor() {
+        if(healthTimer != null) healthTimer.stop();
+        healthTimer = new javax.swing.Timer(HEALTH_CHECK_INTERVAL_MS, new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                runHealthCheck();
+            }
+        });
+        healthTimer.setInitialDelay(HEALTH_CHECK_INTERVAL_MS);
+        healthTimer.start();
+        addWindowListener(new WindowAdapter() {
+            public void windowClosing(WindowEvent e) {
+                shutdownClientConnection();
+            }
+            public void windowClosed(WindowEvent e) {
+                shutdownClientConnection();
+            }
+        });
+    }
+
+    private void shutdownClientConnection() {
+        if(healthTimer != null) {
+            healthTimer.stop();
+            healthTimer = null;
+        }
+        if(ck != null) {
+            ck.dropMe();
+            ck = null;
+        }
+    }
+
+    private void runHealthCheck() {
+        boolean connected = ck != null && ck.isConnected();
+        if(connected) {
+            connectionWasHealthy = true;
+            connectionLossReported = false;
+            long now = System.currentTimeMillis();
+            if(now - lastUserRefreshAt >= USER_REFRESH_INTERVAL_MS) {
+                lastUserRefreshAt = now;
+                refreshUsers();
+            }
+            return;
+        }
+        if(connectionWasHealthy) {
+            handleConnectionLost();
+        } else {
+            updateVideoButtonState();
+            updateSendButtonState();
+        }
+    }
+
+    private void handleConnectionLost() {
+        connectionWasHealthy = false;
+        String selected = selectedConversationKey();
+        visibleUsers.clear();
+        setConnectionStatus("连接已断开，点击重连", DANGER);
+        if(!connectionLossReported) {
+            connectionLossReported = true;
+            addMsg("<font color=\"#cc6600\">连接已断开。请确认服务端仍在运行，然后点击“重试/重连”。未发送文字消息会保留在待发送队列。</font>");
+            showInlineNotice("连接已断开，请检查服务端并点击重连。", DANGER);
+            appendLog("[connection lost] client detected disconnected socket");
+        }
+        if(onlineList != null) rebuildConversationList(selected);
+        updateAttachmentPreview();
     }
 
     private void setConnectionStatus(String text, Color color) {
@@ -2350,9 +2426,10 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         while(it.hasNext()) {
             PendingPrivateMessage pending = it.next();
             if(!onlineUsers.contains(pending.target)) continue;
-            sendTrackedPrivateMessage(pending.target, pending.id, pending.body);
-            sent.add(pending.id);
-            appendLog("[private delivered from queue to " + pending.target + "] " + pending.body);
+            if(sendTrackedPrivateMessage(pending.target, pending.id, pending.body)) {
+                sent.add(pending.id);
+                appendLog("[private delivered from queue to " + pending.target + "] " + pending.body);
+            }
         }
         for(int i=0;i<sent.size();i++) {
             pendingPrivateMessages.remove(sent.get(i));
@@ -3360,15 +3437,19 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         ChatMessage chatMessage = createOutgoingTrackedMessage(target, "发给 " + target,
                 message, time, messageId, online ? "未读" : "待发送");
         showOutgoingTextMessage(chatMessage);
-        if(online) {
-            sendTrackedPrivateMessage(target, messageId, message);
-        } else {
-            PendingPrivateMessage pending = new PendingPrivateMessage(messageId, target, message, time);
-            pending.message = chatMessage;
-            pendingPrivateMessages.put(messageId, pending);
-            savePendingPrivateMessages();
+        if(!online || !sendTrackedPrivateMessage(target, messageId, message)) {
+            queuePendingPrivateMessage(messageId, target, message, time, chatMessage);
         }
         appendLog("[private to " + target + "] " + message);
+    }
+
+    private void queuePendingPrivateMessage(String messageId, String target,
+            String message, String time, ChatMessage chatMessage) {
+        PendingPrivateMessage pending = new PendingPrivateMessage(messageId, target, message, time);
+        pending.message = chatMessage;
+        pendingPrivateMessages.put(messageId, pending);
+        updateOutgoingStatus(messageId, "待发送");
+        savePendingPrivateMessages();
     }
 
     private ChatMessage createOutgoingTrackedMessage(String conversationKey, String sender,
@@ -3385,10 +3466,15 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         return UUID.randomUUID().toString().replace("-", "");
     }
 
-    private void sendTrackedPrivateMessage(String target, String messageId, String message) {
-        ck.sendMessage("/msg " + target + " " + PRIVATE_MESSAGE_PREFIX
+    private boolean sendTrackedPrivateMessage(String target, String messageId, String message) {
+        boolean queued = ck != null && ck.sendMessage("/msg " + target + " " + PRIVATE_MESSAGE_PREFIX
                 + messageId + "|" + encodeToken(message));
+        if(!queued) {
+            updateOutgoingStatus(messageId, "待发送");
+            return false;
+        }
         updateOutgoingStatus(messageId, "未读");
+        return true;
     }
 
     private void showOutgoingTextMessage(final ChatMessage chatMessage) {

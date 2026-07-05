@@ -84,12 +84,14 @@ public class ClientKernel {
             pause(10);
         }
     }
-    public void sendMessage(String str) {
+    public boolean sendMessage(String str) {
         if(!dropMe && isConnected() && cms != null && str != null && str.length() > 0) {
             if(str.charAt(0) == '/')
                 cms.addMessage("" + ClientKernel.COMMAND + str.substring(1) );
             else cms.addMessage(str);
+            return true;
         }
+        return false;
     }
     public void addClient(ChatClient c) {
         clients.add(c);
