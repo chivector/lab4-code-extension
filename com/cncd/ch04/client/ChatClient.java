@@ -159,6 +159,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private Set<String> friends = new HashSet<String>();
     private Map<String, Set<String>> chatGroups = new LinkedHashMap<String, Set<String>>();
     private Map<String, ConversationMeta> conversationMeta = new HashMap<String, ConversationMeta>();
+    private Map<String, java.util.List<ChatMessage>> conversationMessages =
+            new LinkedHashMap<String, java.util.List<ChatMessage>>();
     private Set<String> sentFriendRequests = new HashSet<String>();
     private Set<String> incomingFriendRequests = new HashSet<String>();
     private Set<String> visibleUsers = new HashSet<String>();
@@ -171,6 +173,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private Map<String, JLabel> trackedStatusLabels = new HashMap<String, JLabel>();
     private Map<String, java.util.List<String>> pendingReadReceipts = new HashMap<String, java.util.List<String>>();
     private LinkedList<String> localBroadcastEchoes = new LinkedList<String>();
+    private String renderedConversationKey = null;
     private VoicePlayback activeVoicePlayback;
     private MomentsDialog activeMomentsDialog;
     private Path logFile;
@@ -958,7 +961,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         menu.addSeparator();
         menu.add(createConversationMenuItem("清空当前窗口", new Runnable() {
             public void run() {
-                if(historyWindow != null) historyWindow.clear();
+                clearCurrentConversationWindow();
             }
         }));
         menu.show(buttonHeaderMore, 0, buttonHeaderMore.getHeight() + SPACE_XS);
@@ -1347,6 +1350,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                 sender, message, time), sender);
         chatMessage.messageId = messageId;
         if(historyWindow != null) historyWindow.addMessage(chatMessage);
+        appendLog("[private] " + sender + ": " + message);
         rememberReadReceipt(sender, messageId);
         return true;
     }
@@ -1645,6 +1649,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
     private void updateSelectedConversation() {
         String selected = onlineList == null ? null : onlineList.getSelectedValue();
+        boolean conversationChanged = !sameConversation(renderedConversationKey, selected);
         if(selected == null) {
             selectedChatTarget = null;
             selectedGroupName = null;
@@ -1691,6 +1696,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
         markConversationRead(selected);
         sendPendingReadReceipts(selected);
+        if(conversationChanged) renderConversationMessages(selected);
         updateVideoButtonState();
         updateAttachmentPreview();
         updateSendButtonState();
@@ -1761,8 +1767,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
     private void updateConversationPreview(ChatMessage message) {
         if(message == null || message.kind == MessageKind.SYSTEM) return;
-        String key = message.conversationKey;
-        if(key == null || key.length() == 0) key = BROADCAST_CHAT;
+        String key = conversationKeyForMessage(message);
+        message.conversationKey = key;
         ConversationMeta meta = conversationMeta.get(key);
         if(meta == null) {
             meta = new ConversationMeta();
@@ -1778,7 +1784,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
         if(onlineList != null) {
             String selected = onlineList.getSelectedValue();
-            if(userModel != null && modelContains(key)) {
+            if(userModel != null) {
                 rebuildConversationList(selected);
             } else {
                 onlineList.repaint();
@@ -1868,7 +1874,82 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     }
 
     private boolean isSelectedConversation(String key) {
-        return key != null && onlineList != null && key.equals(onlineList.getSelectedValue());
+        return sameConversation(normalizeConversationKey(key), selectedConversationKey());
+    }
+
+    private boolean sameConversation(String a, String b) {
+        if(a == null) return b == null;
+        return a.equals(b);
+    }
+
+    private String selectedConversationKey() {
+        return onlineList == null ? null : onlineList.getSelectedValue();
+    }
+
+    private String normalizeConversationKey(String key) {
+        return key == null || key.length() == 0 ? BROADCAST_CHAT : key;
+    }
+
+    private String conversationKeyForMessage(ChatMessage message) {
+        if(message == null) return BROADCAST_CHAT;
+        String key = message.conversationKey;
+        if((key == null || key.length() == 0) && message.kind == MessageKind.SYSTEM) {
+            key = selectedConversationKey();
+        }
+        return normalizeConversationKey(key);
+    }
+
+    private String storeConversationMessage(ChatMessage message) {
+        String key = conversationKeyForMessage(message);
+        message.conversationKey = key;
+        java.util.List<ChatMessage> messages = conversationMessages.get(key);
+        if(messages == null) {
+            messages = new ArrayList<ChatMessage>();
+            conversationMessages.put(key, messages);
+        }
+        if(message.messageId != null && message.messageId.length() > 0) {
+            for(int i=0;i<messages.size();i++) {
+                ChatMessage existing = messages.get(i);
+                if(message.messageId.equals(existing.messageId)
+                        && existing.kind == message.kind) {
+                    return key;
+                }
+            }
+        }
+        messages.add(message);
+        while(messages.size() > 500) messages.remove(0);
+        return key;
+    }
+
+    private void renderConversationMessages(String key) {
+        renderedConversationKey = key;
+        if(historyWindow == null) return;
+        java.util.List<ChatMessage> messages = key == null
+                ? null
+                : conversationMessages.get(key);
+        trackedStatusLabels.clear();
+        historyWindow.showMessages(messages, emptyConversationTitle(key), emptyConversationText(key));
+    }
+
+    private String emptyConversationTitle(String key) {
+        if(key == null) return "选择一个会话";
+        if(isBroadcastConversation(key)) return "还没有广播消息";
+        if(isGroupConversation(key)) return groupNameFromLabel(key) + " 还没有消息";
+        return "还没有和 " + key + " 聊天";
+    }
+
+    private String emptyConversationText(String key) {
+        if(key == null) return "从左侧选择好友、群聊或广播后开始聊天";
+        if(isBroadcastConversation(key)) return "发送一条广播消息，在线用户都能看到";
+        if(isGroupConversation(key)) return "发送一条群聊消息，离线成员上线后也会收到";
+        return visibleUsers.contains(key) ? "发送一条消息开始私聊" : "对方离线，文字消息会先显示为待发送";
+    }
+
+    private void clearCurrentConversationWindow() {
+        String selected = selectedConversationKey();
+        if(selected != null) conversationMessages.remove(selected);
+        renderedConversationKey = null;
+        renderConversationMessages(selected);
     }
 
     private String previewText(ChatMessage message) {
@@ -1953,7 +2034,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             return;
         }
         if(toSend.equalsIgnoreCase("/clear")) {
-            historyWindow.clear();
+            clearCurrentConversationWindow();
             lastMsg = "" + toSend;
             msgWindow.setText("");
             return;
@@ -2169,6 +2250,13 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         incomingFriendRequests.clear();
         pendingPrivateMessages.clear();
         pendingDeliveries.clear();
+        conversationMessages.clear();
+        conversationMeta.clear();
+        trackedOutgoingMessages.clear();
+        trackedStatusLabels.clear();
+        pendingReadReceipts.clear();
+        localBroadcastEchoes.clear();
+        renderedConversationKey = null;
         currentProfile = new Properties();
         try {
             if(currentUserDir == null) return;
@@ -2546,14 +2634,88 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         try {
             if(logFile == null || !Files.exists(logFile)) return;
             java.util.List<String> lines = Files.readAllLines(logFile, StandardCharsets.UTF_8);
-            int start = Math.max(0, lines.size() - 30);
+            java.util.List<String> readable = new ArrayList<String>();
+            for(int i=0;i<lines.size();i++) {
+                String display = readableHistoryLine(lines.get(i));
+                if(display != null && display.length() > 0) readable.add(display);
+            }
+            if(readable.size() == 0) return;
+            int start = Math.max(0, readable.size() - 30);
             historyWindow.addMessage(new ChatMessage(MessageKind.SYSTEM, "系统", "已加载最近聊天记录", ""));
-            for(int i=start;i<lines.size();i++) {
-                historyWindow.addMessage(new ChatMessage(MessageKind.SYSTEM, "历史", lines.get(i), ""));
+            for(int i=start;i<readable.size();i++) {
+                historyWindow.addMessage(new ChatMessage(MessageKind.SYSTEM, "历史", readable.get(i), ""));
             }
         } catch(Exception e) {
             historyWindow.addMessage(new ChatMessage(MessageKind.SYSTEM, "系统", "加载聊天记录失败：" + e.getMessage(), ""));
         }
+    }
+
+    private String readableHistoryLine(String line) {
+        String text = stripLogTimestamp(stripHtml(line)).trim();
+        if(text.length() == 0 || shouldSkipLogLine(text)) return null;
+        if(text.startsWith("[connection")) return null;
+        if(text.startsWith("[offline delivery to ")) return null;
+        if(text.startsWith("Unable to find user ")) return null;
+
+        if(text.startsWith("[private to ")) {
+            int end = text.indexOf(']');
+            if(end > 0) {
+                String target = text.substring("[private to ".length(), end).trim();
+                return clipHistoryText("我发给 " + target + "：" + text.substring(end + 1).trim());
+            }
+        }
+        if(text.startsWith("[private delivered from queue to ")) {
+            int end = text.indexOf(']');
+            if(end > 0) {
+                String target = text.substring("[private delivered from queue to ".length(), end).trim();
+                return clipHistoryText("已补发给 " + target + "：" + text.substring(end + 1).trim());
+            }
+        }
+        if(text.startsWith("[private] ")) {
+            String payload = text.substring("[private] ".length()).trim();
+            int colon = payload.indexOf(':');
+            if(colon > 0) {
+                return clipHistoryText(payload.substring(0, colon).trim()
+                        + "：" + payload.substring(colon + 1).trim());
+            }
+        }
+        if(text.startsWith("[broadcast] ")) {
+            return clipHistoryText("广播：" + text.substring("[broadcast] ".length()).trim());
+        }
+        if(text.startsWith("[group ")) {
+            int end = text.indexOf(']');
+            if(end > 0) return clipHistoryText("群聊 " + text.substring("[group ".length(), end).trim()
+                    + "：" + text.substring(end + 1).trim());
+        }
+        if(text.startsWith("[file to ")) {
+            int end = text.indexOf(']');
+            if(end > 0) return clipHistoryText("发送文件给 "
+                    + text.substring("[file to ".length(), end).trim()
+                    + "：" + text.substring(end + 1).trim());
+        }
+        if(text.startsWith("[file from ")) {
+            int end = text.indexOf(']');
+            if(end > 0) return clipHistoryText("收到文件 "
+                    + text.substring("[file from ".length(), end).trim()
+                    + "：" + text.substring(end + 1).trim());
+        }
+        if(isSystemMessage(text)) return null;
+        return clipHistoryText(text);
+    }
+
+    private String stripLogTimestamp(String line) {
+        if(line == null) return "";
+        if(line.length() > 22 && line.charAt(0) == '[' && line.charAt(20) == ']') {
+            return line.substring(22);
+        }
+        return line;
+    }
+
+    private String clipHistoryText(String text) {
+        if(text == null) return "";
+        String normalized = text.replace('\n', ' ').replace('\r', ' ').trim();
+        if(normalized.length() <= 120) return normalized;
+        return normalized.substring(0, 119) + "...";
     }
 
     private void initLogFile(String nick) {
@@ -2914,12 +3076,34 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private void appendLog(String str) {
         try {
             if(logFile == null) return;
+            String plain = stripHtml(str);
+            if(shouldSkipLogLine(plain)) return;
             String line = "[" + LocalDateTime.now().format(logTime) + "] "
-                    + stripHtml(str) + System.lineSeparator();
+                    + plain + System.lineSeparator();
             Files.write(logFile, line.getBytes(StandardCharsets.UTF_8),
                     StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } catch(Exception e) {
         }
+    }
+
+    private boolean shouldSkipLogLine(String text) {
+        if(text == null) return true;
+        String plain = stripLogTimestamp(text).trim();
+        if(plain.length() == 0) return true;
+        return plain.contains(USERS_PREFIX)
+                || plain.contains(FILE_PREFIX)
+                || plain.contains(SERVER_MOMENT_ITEM_PREFIX)
+                || plain.contains(FRIEND_REQUEST_PREFIX)
+                || plain.contains(FRIEND_ACCEPT_PREFIX)
+                || plain.contains(FRIEND_REJECT_PREFIX)
+                || plain.contains(GROUP_INVITE_PREFIX)
+                || plain.contains(GROUP_MESSAGE_PREFIX)
+                || plain.contains(MOMENT_SYNC_REQUEST_PREFIX)
+                || plain.contains(MOMENT_SYNC_ITEM_PREFIX)
+                || plain.contains(MOMENT_DELETE_PREFIX)
+                || plain.contains(VIDEO_CALL_PREFIX)
+                || plain.contains(PRIVATE_MESSAGE_PREFIX)
+                || plain.contains(READ_RECEIPT_PREFIX);
     }
 
     private void chooseAndSendFile() {
@@ -3337,6 +3521,23 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         for(int i=0;i<savedFriends.size();i++) {
             String friend = savedFriends.get(i);
             addConversationCandidate(candidates, friend, filter, ownNick);
+        }
+
+        java.util.List<String> rememberedConversations = new ArrayList<String>();
+        rememberedConversations.addAll(conversationMeta.keySet());
+        Iterator<String> messageKeys = conversationMessages.keySet().iterator();
+        while(messageKeys.hasNext()) {
+            String key = messageKeys.next();
+            if(!rememberedConversations.contains(key)) rememberedConversations.add(key);
+        }
+        Iterator<PendingPrivateMessage> pendingIt = pendingPrivateMessages.values().iterator();
+        while(pendingIt.hasNext()) {
+            String target = pendingIt.next().target;
+            if(!rememberedConversations.contains(target)) rememberedConversations.add(target);
+        }
+        Collections.sort(rememberedConversations, String.CASE_INSENSITIVE_ORDER);
+        for(int i=0;i<rememberedConversations.size();i++) {
+            addConversationCandidate(candidates, rememberedConversations.get(i), filter, ownNick);
         }
 
         Collections.sort(candidates, new Comparator<String>() {
@@ -6125,18 +6326,47 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
 
         public void addMessage(ChatMessage message) {
+            if(message == null) return;
+            String key = storeConversationMessage(message);
+            if(isSelectedConversation(key)) appendMessageRow(message, true);
+            updateConversationPreview(message);
+        }
+
+        public void showMessages(java.util.List<ChatMessage> messages, String emptyTitle, String emptyText) {
+            removeAll();
+            showingEmptyState = false;
+            if(messages == null || messages.size() == 0) {
+                showEmptyState(emptyTitle, emptyText);
+                revalidate();
+                repaint();
+                return;
+            }
+            for(int i=0;i<messages.size();i++) {
+                appendMessageRow(messages.get(i), false);
+            }
+            revalidate();
+            repaint();
+            scrollToBottom();
+        }
+
+        private void appendMessageRow(ChatMessage message, boolean refresh) {
             if(showingEmptyState) {
                 removeAll();
                 showingEmptyState = false;
             }
-            updateConversationPreview(message);
             Component row = message.kind == MessageKind.SYSTEM
                     ? createSystemRow(message)
                     : createChatRow(message);
             add(row);
             add(Box.createVerticalStrut(6));
-            revalidate();
-            repaint();
+            if(refresh) {
+                revalidate();
+                repaint();
+                scrollToBottom();
+            }
+        }
+
+        private void scrollToBottom() {
             SwingUtilities.invokeLater(new Runnable() {
                 public void run() {
                     JScrollPane pane = (JScrollPane)SwingUtilities.getAncestorOfClass(JScrollPane.class, ClientHistory.this);
@@ -6677,8 +6907,12 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
 
         private void showEmptyState() {
+            showEmptyState("欢迎进入 CNCD Chat", "消息、文件、语音和通话记录会显示在这里");
+        }
+
+        private void showEmptyState(String title, String text) {
             removeAll();
-            JPanel state = createEmptyState("欢迎进入 CNCD Chat", "消息、文件、语音和通话记录会显示在这里");
+            JPanel state = createEmptyState(title, text);
             state.setAlignmentX(Component.LEFT_ALIGNMENT);
             state.setMaximumSize(new Dimension(Integer.MAX_VALUE, 260));
             add(Box.createVerticalGlue());
