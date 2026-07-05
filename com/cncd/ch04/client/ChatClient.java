@@ -131,7 +131,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     JButton buttonHeaderMore, buttonVideo;
     JButton buttonCreateGroup;
     JButton buttonProfile, buttonMoments;
-    JLabel statusLabel, conversationTitleLabel, conversationSubtitleLabel;
+    JLabel statusLabel, connectionDotLabel, conversationTitleLabel, conversationSubtitleLabel;
+    JLabel conversationStateLabel, composerHintLabel;
     JLabel sidebarNameLabel, sidebarSignatureLabel;
     JPanel attachmentPanel;
     JLabel attachmentIconLabel, attachmentNameLabel, attachmentMetaLabel;
@@ -315,9 +316,9 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                 pad(8, 18, 8, 18)));
 
         JLabel appTitle = new JLabel("CNCD Chat");
-        appTitle.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 16));
+        appTitle.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 17));
         appTitle.setForeground(TEXT);
-        JLabel appSubTitle = new JLabel("桌面聊天实验");
+        JLabel appSubTitle = new JLabel("现代桌面即时通讯");
         appSubTitle.setFont(UI_FONT_SMALL);
         appSubTitle.setForeground(MUTED);
         JPanel titleBlock = new JPanel();
@@ -340,11 +341,14 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         txtHost = createTextField(ChatClient.serverText, 10);
         txtPort = createTextField(ChatClient.portText, 5);
         txtNick = createTextField(ChatClient.nickText, 10);
-        buttonConnect = createButton("重连", false);
-        buttonConnect.setPreferredSize(new Dimension(68, BUTTON_HEIGHT));
+        buttonConnect = createButton("连接", false);
+        buttonConnect.setPreferredSize(new Dimension(78, BUTTON_HEIGHT));
         statusLabel = new JLabel("未连接");
         statusLabel.setFont(UI_FONT_SMALL);
         statusLabel.setForeground(MUTED);
+        connectionDotLabel = new JLabel("●");
+        connectionDotLabel.setFont(new Font("Dialog", Font.BOLD, 12));
+        connectionDotLabel.setForeground(SOFT_MUTED);
 
         buttonConnect.addActionListener(this);
         buttonConnect.addKeyListener(this);
@@ -352,9 +356,11 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         JPanel statusBlock = new JPanel();
         statusBlock.setOpaque(false);
         statusBlock.setLayout(new BoxLayout(statusBlock, BoxLayout.X_AXIS));
-        BubblePanel statusPill = createPillPanel(PRIMARY_SOFT, BORDER_LIGHT);
-        statusPill.setLayout(new BorderLayout());
-        statusPill.add(statusLabel, BorderLayout.CENTER);
+        BubblePanel statusPill = createPillPanel(new Color(248, 250, 252), BORDER_LIGHT);
+        statusPill.setLayout(new BoxLayout(statusPill, BoxLayout.X_AXIS));
+        statusPill.add(connectionDotLabel);
+        statusPill.add(Box.createHorizontalStrut(SPACE_XS));
+        statusPill.add(statusLabel);
         statusBlock.add(statusPill);
         statusBlock.add(Box.createHorizontalStrut(SPACE_SM));
         statusBlock.add(buttonConnect);
@@ -569,6 +575,13 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         conversationSubtitleLabel = new JLabel("消息将发送给所有在线用户");
         conversationSubtitleLabel.setFont(UI_FONT_SMALL);
         conversationSubtitleLabel.setForeground(MUTED);
+        conversationStateLabel = new JLabel("广播");
+        conversationStateLabel.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 12));
+        conversationStateLabel.setForeground(PRIMARY_DARK);
+        conversationStateLabel.setHorizontalAlignment(SwingConstants.CENTER);
+        conversationStateLabel.setBorder(new CompoundBorder(
+                new RoundedBorder(new Color(194, 235, 210), RADIUS_XL),
+                pad(4, 10, 4, 10)));
         textBlock.add(conversationTitleLabel);
         textBlock.add(Box.createVerticalStrut(SPACE_XS));
         textBlock.add(conversationSubtitleLabel);
@@ -586,6 +599,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         buttonHeaderMore.addActionListener(this);
         JPanel headerActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, SPACE_SM, 0));
         headerActions.setOpaque(false);
+        headerActions.add(conversationStateLabel);
         headerActions.add(buttonVideo);
         headerActions.add(buttonHeaderMore);
         header.add(headerActions, BorderLayout.EAST);
@@ -686,8 +700,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
         JPanel actionRow = new JPanel(new BorderLayout());
         actionRow.setOpaque(false);
-        JLabel hint = createHintLabel("Enter 发送 · Shift+Enter 换行");
-        actionRow.add(hint, BorderLayout.WEST);
+        composerHintLabel = createHintLabel("选择会话后开始聊天");
+        actionRow.add(composerHintLabel, BorderLayout.WEST);
         actionRow.add(buttonSend, BorderLayout.EAST);
 
         composer.add(toolbar, BorderLayout.NORTH);
@@ -696,6 +710,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
         southPanel.add(attachmentPanel, BorderLayout.NORTH);
         southPanel.add(composer, BorderLayout.CENTER);
+        updateVideoButtonState();
+        updateSendButtonState();
         return southPanel;
     }
 
@@ -797,16 +813,27 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private JPanel createEmptyState(String title, String detail) {
         JPanel panel = new JPanel(new GridBagLayout());
         panel.setOpaque(false);
-        JPanel card = createCardPanel(SPACE_XL);
+        JPanel card = new BubblePanel(SURFACE, BORDER_LIGHT, RADIUS_XL);
         card.setLayout(new BoxLayout(card, BoxLayout.Y_AXIS));
+        card.setBorder(pad(SPACE_XL, SPACE_XL + 8, SPACE_XL, SPACE_XL + 8));
+        card.setPreferredSize(new Dimension(260, 154));
+        JLabel mark = new JLabel("CNCD");
+        mark.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 13));
+        mark.setForeground(PRIMARY_DARK);
+        mark.setHorizontalAlignment(SwingConstants.CENTER);
+        mark.setAlignmentX(Component.CENTER_ALIGNMENT);
+        mark.setBorder(new CompoundBorder(new RoundedBorder(new Color(194, 235, 210), RADIUS_XL),
+                pad(5, 12, 5, 12)));
         JLabel titleLabel = new JLabel(title);
-        titleLabel.setFont(UI_FONT_BOLD);
+        titleLabel.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 17));
         titleLabel.setForeground(TEXT);
         titleLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
         JLabel detailLabel = new JLabel(detail);
         detailLabel.setFont(UI_FONT_SMALL);
         detailLabel.setForeground(MUTED);
         detailLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        card.add(mark);
+        card.add(Box.createVerticalStrut(SPACE_MD));
         card.add(titleLabel);
         card.add(Box.createVerticalStrut(SPACE_SM));
         card.add(detailLabel);
@@ -1449,14 +1476,17 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             if(ck!=null) ck.dropMe();
             String host = txtHost.getText().trim();
             int port = Integer.parseInt(txtPort.getText().trim());
-            setConnectionStatus("正在连接 " + host + ":" + port + " ...", WARNING);
+            setConnectionStatus("正在连接 " + host + ":" + port, WARNING);
             ck = new ClientKernel(host, port);
             if(ck.isConnected()) {
                 ck.addClient(this);
                 ck.setNick(txtNick.getText());
                 initLogFile(txtNick.getText());
-                setConnectionStatus("已连接 " + host + ":" + port
-                        + "，本地端口 " + ck.getLocalPort(), SUCCESS);
+                setConnectionStatus("已连接 · " + host + ":" + port, SUCCESS);
+                if(statusLabel != null) {
+                    statusLabel.setToolTipText("已连接 " + host + ":" + port
+                            + "，本地端口 " + ck.getLocalPort());
+                }
                 setTitle(appName + " - " + txtNick.getText());
                 addMsg("<font color=\"#008000\">connected! Local Port:" + ck.getLocalPort() + "</font>");
                 refreshUsers();
@@ -1479,7 +1509,29 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         if(statusLabel != null) {
             statusLabel.setText(text);
             statusLabel.setForeground(color);
+            statusLabel.setToolTipText(text);
         }
+        if(connectionDotLabel != null) {
+            connectionDotLabel.setForeground(color == null ? SOFT_MUTED : color);
+        }
+        if(buttonConnect != null) {
+            if(SUCCESS.equals(color)) buttonConnect.setText("重连");
+            else if(WARNING.equals(color)) buttonConnect.setText("连接中");
+            else if(DANGER.equals(color)) buttonConnect.setText("重试");
+            else buttonConnect.setText("连接");
+        }
+        updateVideoButtonState();
+        updateSendButtonState();
+    }
+
+    private void setConversationState(String text, Color foreground, Color border) {
+        if(conversationStateLabel == null) return;
+        conversationStateLabel.setText(text);
+        conversationStateLabel.setForeground(foreground);
+        conversationStateLabel.setBorder(new CompoundBorder(
+                new RoundedBorder(border, RADIUS_XL),
+                pad(4, 10, 4, 10)));
+        conversationStateLabel.setToolTipText(text);
     }
 
     private boolean isBroadcastConversation(String value) {
@@ -1507,6 +1559,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             if(conversationTitleLabel != null) conversationTitleLabel.setText("选择会话");
             if(conversationSubtitleLabel != null) conversationSubtitleLabel.setText("从左侧选择好友、群聊或广播");
             if(conversationAvatar != null) conversationAvatar.setAvatar("?", false);
+            setConversationState("未选择", MUTED, BORDER_LIGHT);
             if(buttonFile != null) buttonFile.setEnabled(true);
         } else if(isBroadcastConversation(selected)) {
             selectedChatTarget = null;
@@ -1514,6 +1567,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             if(conversationTitleLabel != null) conversationTitleLabel.setText(BROADCAST_CHAT);
             if(conversationSubtitleLabel != null) conversationSubtitleLabel.setText("消息将广播给所有在线用户");
             if(conversationAvatar != null) conversationAvatar.setAvatar(BROADCAST_CHAT, false);
+            setConversationState("广播", PRIMARY_DARK, new Color(194, 235, 210));
             if(buttonFile != null) buttonFile.setEnabled(true);
         } else if(isGroupConversation(selected)) {
             selectedChatTarget = null;
@@ -1527,6 +1581,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                         + onlineCount + " 人在线 · 只发送给群成员");
             }
             if(conversationAvatar != null) conversationAvatar.setAvatar(selectedGroupName, false);
+            setConversationState("群聊", PRIMARY_DARK, new Color(194, 235, 210));
             if(buttonFile != null) buttonFile.setEnabled(true);
         } else {
             selectedChatTarget = selected;
@@ -1537,6 +1592,9 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                 conversationSubtitleLabel.setText(online ? "当前为私聊，只发送给 " + selected : "好友离线，文字消息将待发送");
             }
             if(conversationAvatar != null) conversationAvatar.setAvatar(selected, false);
+            setConversationState(online ? "在线" : "离线",
+                    online ? SUCCESS : SOFT_MUTED,
+                    online ? new Color(194, 235, 210) : BORDER_LIGHT);
             if(buttonFile != null) buttonFile.setEnabled(true);
         }
         markConversationRead(selected);
@@ -1548,14 +1606,38 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     }
 
     private void updateVideoButtonState() {
-        if(buttonVideo == null) return;
         boolean canCall = ck != null && ck.isConnected()
                 && selectedChatTarget != null
                 && visibleUsers.contains(selectedChatTarget);
-        buttonVideo.setEnabled(canCall);
-        buttonVideo.setToolTipText(canCall
-                ? "和 " + selectedChatTarget + " 视频通话"
-                : "请选择在线好友后发起视频通话");
+        if(buttonVideo != null) {
+            buttonVideo.setEnabled(canCall);
+            buttonVideo.setToolTipText(canCall
+                    ? "和 " + selectedChatTarget + " 视频通话"
+                    : "请选择在线好友后发起视频通话");
+        }
+        updateAttachmentToolState(canCall);
+    }
+
+    private void updateAttachmentToolState(boolean canSendLiveAttachment) {
+        String tooltip = canSendLiveAttachment
+                ? "发送给 " + selectedChatTarget
+                : "选择在线好友后可用";
+        if(buttonImage != null) {
+            buttonImage.setEnabled(canSendLiveAttachment);
+            buttonImage.setToolTipText(canSendLiveAttachment ? "发送图片给 " + selectedChatTarget : tooltip);
+        }
+        if(buttonVoice != null) {
+            buttonVoice.setEnabled(canSendLiveAttachment);
+            buttonVoice.setToolTipText(canSendLiveAttachment ? "发送语音文件给 " + selectedChatTarget : tooltip);
+        }
+        if(buttonRecord != null) {
+            buttonRecord.setEnabled(canSendLiveAttachment);
+            buttonRecord.setToolTipText(canSendLiveAttachment ? "录制语音给 " + selectedChatTarget : tooltip);
+        }
+        if(buttonFile != null) {
+            buttonFile.setEnabled(canSendLiveAttachment);
+            buttonFile.setToolTipText(canSendLiveAttachment ? "发送文件给 " + selectedChatTarget : tooltip);
+        }
     }
 
     private String getSelectedPrivateTarget() {
@@ -2720,7 +2802,46 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         boolean hasText = msgWindow.getText() != null && msgWindow.getText().trim().length() > 0;
         boolean hasFile = pendingFile != null;
         boolean hasConversation = onlineList != null && onlineList.getSelectedValue() != null;
-        buttonSend.setEnabled((hasText || hasFile) && hasConversation);
+        boolean connected = ck != null && ck.isConnected();
+        boolean attachmentTargetReady = !hasFile
+                || (selectedChatTarget != null && visibleUsers.contains(selectedChatTarget));
+        boolean ready = connected && hasConversation && (hasText || hasFile) && attachmentTargetReady;
+        buttonSend.setEnabled(ready);
+        if(buttonSend != null) {
+            if(ready) buttonSend.setToolTipText("发送到当前会话");
+            else if(!connected) buttonSend.setToolTipText("请先连接服务器");
+            else if(!hasConversation) buttonSend.setToolTipText("请先选择会话");
+            else if(hasFile && !attachmentTargetReady) buttonSend.setToolTipText("附件只能发送给在线联系人");
+            else buttonSend.setToolTipText("输入内容后发送");
+        }
+        updateComposerHint(connected, hasConversation, hasText, hasFile, attachmentTargetReady);
+    }
+
+    private void updateComposerHint(boolean connected, boolean hasConversation,
+            boolean hasText, boolean hasFile, boolean attachmentTargetReady) {
+        if(composerHintLabel == null) return;
+        if(!connected) {
+            composerHintLabel.setText("未连接服务器");
+            composerHintLabel.setForeground(DANGER);
+        } else if(!hasConversation) {
+            composerHintLabel.setText("选择一个会话");
+            composerHintLabel.setForeground(MUTED);
+        } else if(hasFile && !attachmentTargetReady) {
+            composerHintLabel.setText("附件需要发送给在线联系人");
+            composerHintLabel.setForeground(WARNING);
+        } else if(hasText || hasFile) {
+            composerHintLabel.setText("准备发送到当前会话");
+            composerHintLabel.setForeground(PRIMARY_DARK);
+        } else if(selectedGroupName != null) {
+            composerHintLabel.setText("群聊消息");
+            composerHintLabel.setForeground(MUTED);
+        } else if(selectedChatTarget != null) {
+            composerHintLabel.setText(visibleUsers.contains(selectedChatTarget) ? "私聊消息" : "离线文字消息");
+            composerHintLabel.setForeground(MUTED);
+        } else {
+            composerHintLabel.setText("广播消息");
+            composerHintLabel.setForeground(MUTED);
+        }
     }
 
     private void clearAttachment() {
@@ -6152,7 +6273,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
         private void showEmptyState() {
             removeAll();
-            JPanel state = createEmptyState("选择一个会话开始聊天", "消息、文件和群聊记录会显示在这里");
+            JPanel state = createEmptyState("欢迎进入 CNCD Chat", "消息、文件、语音和通话记录会显示在这里");
             state.setAlignmentX(Component.LEFT_ALIGNMENT);
             state.setMaximumSize(new Dimension(Integer.MAX_VALUE, 260));
             add(Box.createVerticalGlue());
