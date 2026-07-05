@@ -37,6 +37,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private static final String MESSAGE_RECALL_PREFIX = "__RECALL__|";
     private static final String GROUP_FILE_PREFIX = "__GROUP_FILE__";
     private static final String BROADCAST_FILE_PREFIX = "__BROADCAST_FILE__";
+    private static final String PRIVATE_FILE_PREFIX = "__PRIVATE_FILE__";
     private static final String PENDING_FILE_PREFIX = "__PENDING_FILE__|";
     private static final String MOMENT_SYNC_REQUEST_PREFIX = "__MOMENT_REQ__|";
     private static final String MOMENT_SYNC_ITEM_PREFIX = "__MOMENT_ITEM__|";
@@ -5264,7 +5265,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         try {
             byte[] data = readFileDataForSending(file);
             if(data == null) return false;
-            String wireName = file.getName();
+            String wireName = encodePrivateFileName(file.getName());
             String encoded = Base64.getEncoder().encodeToString(data);
             if(ck != null && ck.isConnected() && visibleUsers.contains(target)) {
                 ck.sendMessage("/file " + target + " " + wireName + " " + encoded);
@@ -5359,6 +5360,10 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
     private String encodeBroadcastFileName(String original) {
         return BROADCAST_FILE_PREFIX + encodeToken(original).replace("=", "_");
+    }
+
+    private String encodePrivateFileName(String original) {
+        return PRIVATE_FILE_PREFIX + encodeToken(original).replace("=", "_");
     }
 
     private String restoreTokenPadding(String token) {
@@ -5593,6 +5598,15 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             } else if(filename != null && filename.startsWith(BROADCAST_FILE_PREFIX)) {
                 displayName = decodeToken(restoreTokenPadding(filename.substring(BROADCAST_FILE_PREFIX.length())));
                 conversationKey = BROADCAST_CHAT;
+            } else if(filename != null && filename.startsWith(PRIVATE_FILE_PREFIX)) {
+                displayName = decodeToken(restoreTokenPadding(filename.substring(PRIVATE_FILE_PREFIX.length())));
+                conversationKey = sender;
+                displaySender = sender;
+                if(!friends.contains(sender)) {
+                    showInlineNotice("收到非好友 " + sender + " 的文件，已拦截。", DANGER);
+                    appendLog("[blocked file from " + sender + "] " + displayName);
+                    return;
+                }
             } else if(!friends.contains(sender)) {
                 showInlineNotice("收到非好友 " + sender + " 的文件，已拦截。", DANGER);
                 appendLog("[blocked file from " + sender + "] " + filename);
