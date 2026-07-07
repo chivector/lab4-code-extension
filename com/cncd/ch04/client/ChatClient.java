@@ -5,6 +5,7 @@ import javax.swing.border.*;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.imageio.ImageIO;
 import javax.sound.sampled.*;
+import com.github.sarxos.webcam.*;
 import java.awt.*;
 import java.awt.event.*;
 import java.awt.image.BufferedImage;
@@ -59,7 +60,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private static final int CALL_AUDIO_QUEUE_LIMIT = 45;
     private static final int CALL_VIDEO_WIDTH = 320;
     private static final int CALL_VIDEO_HEIGHT = 180;
-    private static final int CALL_VIDEO_INTERVAL_MS = 650;
+    private static final int CALL_VIDEO_INTERVAL_MS = 50;
     private static final int HEALTH_CHECK_INTERVAL_MS = 2500;
     private static final int USER_REFRESH_INTERVAL_MS = 30000;
     private static final String ACCOUNT_FILE = "accounts.properties";
@@ -7061,10 +7062,11 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             if(finished) return;
             connected = true;
             connectedAt = System.currentTimeMillis();
-            if(statusLabel != null) statusLabel.setText("正在通话 · 麦克风已连接，可手动共享屏幕");
+            if(statusLabel != null) statusLabel.setText("正在通话 · 摄像头和麦克风已连接");
             if(remoteSurface != null) remoteSurface.setWaiting(false);
             startCallTimer();
             startAudioMedia();
+            startVideoSender();
         }
 
         void finishFromRemote(String text) {
@@ -7329,20 +7331,49 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         private void startVideoSender() {
             if(videoRunning) return;
             videoRunning = true;
-            screenSharing = true;
-            if(screenButton != null) screenButton.setText("停止共享");
-            if(statusLabel != null) statusLabel.setText("正在通话 · 正在共享屏幕");
+            if(statusLabel != null) statusLabel.setText("正在通话 · 摄像头已开启");
             videoSendThread = new Thread(new Runnable() {
                 public void run() {
+                    Webcam webcam = null;
                     try {
-                        Robot robot = new Robot();
-                        Rectangle screen = new Rectangle(Toolkit.getDefaultToolkit().getScreenSize());
+                        System.out.println("[VIDEO] Starting webcam capture...");
+                        webcam = Webcam.getDefault();
+                        if(webcam == null) {
+                            System.out.println("[VIDEO] No webcam detected");
+                            setCallStatusLater("未检测到摄像头");
+                            return;
+                        }
+                        System.out.println("[VIDEO] Webcam found: " + webcam.getName());
+                        Dimension[] resolutions = webcam.getViewSizes();
+                        System.out.println("[VIDEO] Available resolutions: " + Arrays.toString(resolutions));
+                        Dimension targetSize = resolutions[resolutions.length - 1];
+                        for(Dimension d : resolutions) {
+                            if(d.width <= CALL_VIDEO_WIDTH && d.height <= CALL_VIDEO_HEIGHT) {
+                                if(d.width * d.height > targetSize.width * targetSize.height) {
+                                    targetSize = d;
+                                }
+                            }
+                        }
+                        System.out.println("[VIDEO] Selected resolution: " + targetSize);
+                        webcam.setViewSize(targetSize);
+                        System.out.println("[VIDEO] Opening webcam with size: " + targetSize);
+                        webcam.open();
+                        System.out.println("[VIDEO] Webcam opened successfully");
+                        int frameCount = 0;
                         while(videoRunning && !finished && connected) {
-                            BufferedImage capture = robot.createScreenCapture(screen);
-                            BufferedImage scaled = scaleImage(capture, CALL_VIDEO_WIDTH, CALL_VIDEO_HEIGHT);
-                            if(localSurface != null) localSurface.setFrame(scaled);
-                            String encoded = encodeImage(scaled);
-                            if(encoded.length() > 0) sendVideoMedia(peer, VIDEO_FRAME, encoded);
+                            BufferedImage image = webcam.getImage();
+                            if(image != null) {
+                                BufferedImage scaled = scaleImage(image, CALL_VIDEO_WIDTH, CALL_VIDEO_HEIGHT);
+                                if(localSurface != null) localSurface.setFrame(scaled);
+                                String encoded = encodeImage(scaled);
+                                if(encoded.length() > 0) sendVideoMedia(peer, VIDEO_FRAME, encoded);
+                                frameCount++;
+                                if(frameCount % 10 == 0) {
+                                    System.out.println("[VIDEO] Sent " + frameCount + " frames");
+                                }
+                            } else {
+                                System.out.println("[VIDEO] Image is null");
+                            }
                             try {
                                 Thread.sleep(CALL_VIDEO_INTERVAL_MS);
                             } catch(InterruptedException e) {
@@ -7350,15 +7381,20 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                                 break;
                             }
                         }
+                        System.out.println("[VIDEO] Loop exited - videoRunning=" + videoRunning + ", finished=" + finished + ", connected=" + connected);
                     } catch(Exception e) {
-                        setCallStatusLater("无法共享屏幕：" + e.getMessage());
+                        System.out.println("[VIDEO] Error: " + e.getMessage());
+                        e.printStackTrace();
+                        setCallStatusLater("摄像头启动失败：" + e.getMessage());
                     } finally {
+                        System.out.println("[VIDEO] Cleaning up");
+                        if(webcam != null && webcam.isOpen()) {
+                            try { webcam.close(); } catch(Exception e) {}
+                        }
                         SwingUtilities.invokeLater(new Runnable() {
                             public void run() {
-                                screenSharing = false;
                                 videoRunning = false;
                                 videoSendThread = null;
-                                if(screenButton != null) screenButton.setText("共享屏幕");
                                 if(localSurface != null) localSurface.clearFrame();
                             }
                         });

@@ -123,11 +123,17 @@ public class BroadcastCommandParser implements CommandParser {
             cc.sendMessage("usage: /msg <user> <message>");
             return;
         }
-        String msg = "<font color=\"#663399\">[private] " + cc.nick + ":"
-                + strBuff.toString() + "</font>";
-        cc.sendTo(user, msg);
-        cc.sendMessage("<font color=\"#666666\">[private sent to " + user + "] "
-                + strBuff.toString() + "</font>");
+        String message = strBuff.toString().trim();
+        if(message.startsWith("__VIDEO_CALL__")) {
+            cc.sendTo(user, "[private] " + cc.nick + ":" + message);
+            cc.sendMessage("<font color=\"#666666\">[video call sent to " + user + "]</font>");
+        } else {
+            String msg = "<font color=\"#663399\">[private] " + cc.nick + ":"
+                    + message + "</font>";
+            cc.sendTo(user, msg);
+            cc.sendMessage("<font color=\"#666666\">[private sent to " + user + "] "
+                    + message + "</font>");
+        }
     }
     private void file(ConnectedClient cc, StringTokenizer strTok) {
         if(strTok.countTokens() < 3) {
