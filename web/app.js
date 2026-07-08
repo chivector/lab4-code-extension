@@ -149,7 +149,7 @@ function connectEvents() {
 }
 
 async function connectServer() {
-  const host = $('#hostInput').value.trim() || '127.0.0.1';
+  const host = $('#hostInput').value.trim() || '192.168.85.86';
   const port = $('#portInput').value.trim() || '3500';
   const nick = $('#nickInput').value.trim() || 'WebUser';
   setStatus('正在连接...', '');

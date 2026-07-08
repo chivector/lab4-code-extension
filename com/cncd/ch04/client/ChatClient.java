@@ -20,7 +20,7 @@ import java.util.*;
 
 public class ChatClient extends JFrame implements KeyListener, ActionListener, FocusListener {
     public static final String appName = "CNCD Chat";
-    public static final String serverText = "127.0.0.1";
+    public static final String serverText = "192.168.85.86";
     public static final String portText = "3500";
     public static final String nickText = "YourName";
     public static final String USERS_PREFIX = "__USERS__|";
@@ -52,7 +52,6 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private static final String VIDEO_HANGUP = "HANGUP";
     private static final String VIDEO_AUDIO = "AUDIO";
     private static final String VIDEO_FRAME = "FRAME";
-    private static final String VIDEO_SCREEN_STOP = "SCREEN_STOP";
 
     private static final long MAX_FILE_BYTES = 5L * 1024L * 1024L;
     private static final int MESSAGE_TEXT_LIMIT = 800;
@@ -1511,8 +1510,6 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             handleVideoAudioFrame(sender, action.substring((VIDEO_AUDIO + "|").length()));
         } else if(action.startsWith(VIDEO_FRAME + "|")) {
             handleVideoFrame(sender, action.substring((VIDEO_FRAME + "|").length()));
-        } else if(VIDEO_SCREEN_STOP.equals(action)) {
-            handleVideoScreenStop(sender);
         } else if(VIDEO_INVITE.equals(action)) {
             handleIncomingVideoInvite(sender);
         } else if(VIDEO_ACCEPT.equals(action)) {
@@ -2687,7 +2684,10 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
     private void handleVideoAccepted(String sender) {
         pendingVideoCalls.remove(sender);
-        VideoCallWindow window = openVideoCallWindow(sender, true);
+        VideoCallWindow window = videoWindowFor(sender);
+        if(window == null) {
+            window = openVideoCallWindow(sender, true);
+        }
         window.showConnected();
         showVideoSystemMessage(sender + " 已接听视频通话。");
     }
@@ -2714,11 +2714,6 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private void handleVideoFrame(String sender, String encoded) {
         VideoCallWindow window = videoWindowFor(sender);
         if(window != null) window.receiveVideoFrame(encoded);
-    }
-
-    private void handleVideoScreenStop(String sender) {
-        VideoCallWindow window = videoWindowFor(sender);
-        if(window != null) window.remoteScreenStopped();
     }
 
     private void sendVideoSignal(String target, String action) {
@@ -6908,7 +6903,6 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         private boolean outgoing;
         private boolean connected = false;
         private boolean finished = false;
-        private boolean screenSharing = false;
         private boolean micOn = true;
         private volatile boolean audioRunning = false;
         private volatile boolean playbackRunning = false;
@@ -6918,7 +6912,6 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         private JLabel timerLabel;
         private VideoSurface remoteSurface;
         private VideoSurface localSurface;
-        private JButton screenButton;
         private JButton micButton;
         private JButton hangupButton;
         private TargetDataLine callMicLine;
@@ -7002,14 +6995,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
             JPanel controls = new JPanel(new FlowLayout(FlowLayout.CENTER, SPACE_MD, SPACE_MD));
             controls.setBackground(new Color(20, 20, 20));
-            screenButton = createCallButton("共享屏幕", new Color(62, 62, 62));
             micButton = createCallButton("静音", new Color(62, 62, 62));
             hangupButton = createCallButton("挂断", new Color(224, 68, 68));
-            screenButton.addActionListener(new ActionListener() {
-                public void actionPerformed(ActionEvent e) {
-                    toggleScreenShare();
-                }
-            });
             micButton.addActionListener(new ActionListener() {
                 public void actionPerformed(ActionEvent e) {
                     toggleMic();
@@ -7020,7 +7007,6 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                     hangupLocal();
                 }
             });
-            controls.add(screenButton);
             controls.add(micButton);
             controls.add(hangupButton);
 
@@ -7092,17 +7078,6 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             sendVideoSignal(peer, VIDEO_HANGUP);
             showVideoSystemMessage("已结束与 " + peer + " 的视频通话。");
             disposeWindow();
-        }
-
-        private void toggleScreenShare() {
-            if(!connected || finished) return;
-            if(screenSharing) {
-                stopVideoSender();
-                sendVideoSignal(peer, VIDEO_SCREEN_STOP);
-                if(statusLabel != null) statusLabel.setText("正在通话 · 屏幕共享已停止");
-            } else {
-                startVideoSender();
-            }
         }
 
         private void toggleMic() {
@@ -7407,10 +7382,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
         private void stopVideoSender() {
             videoRunning = false;
-            screenSharing = false;
             if(videoSendThread != null) videoSendThread.interrupt();
             videoSendThread = null;
-            if(screenButton != null) screenButton.setText("共享屏幕");
             if(localSurface != null) localSurface.clearFrame();
         }
 
@@ -7425,11 +7398,6 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                 }
             } catch(Exception e) {
             }
-        }
-
-        void remoteScreenStopped() {
-            if(remoteSurface != null) remoteSurface.clearFrame();
-            if(statusLabel != null && connected) statusLabel.setText("正在通话 · 对方已停止共享屏幕");
         }
 
         private BufferedImage scaleImage(BufferedImage source, int maxWidth, int maxHeight) {
@@ -7498,7 +7466,6 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         }
 
         private void disableControls() {
-            if(screenButton != null) screenButton.setEnabled(false);
             if(micButton != null) micButton.setEnabled(false);
             if(hangupButton != null) hangupButton.setEnabled(false);
         }
