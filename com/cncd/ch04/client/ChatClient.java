@@ -3959,7 +3959,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         momentsTitle.setAlignmentX(Component.LEFT_ALIGNMENT);
         card.add(momentsTitle);
         card.add(Box.createVerticalStrut(SPACE_SM));
-        JPanel momentsPreview = createUserMomentsPreview(username, isSelf || isFriend);
+        JPanel momentsPreview = createUserMomentsPreview(username);
         momentsPreview.setAlignmentX(Component.LEFT_ALIGNMENT);
         card.add(momentsPreview);
         card.add(Box.createVerticalGlue());
@@ -4033,23 +4033,26 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         return separator;
     }
 
-    private JPanel createUserMomentsPreview(final String username, boolean canView) {
+    private JPanel createUserMomentsPreview(final String username) {
         JPanel panel = new JPanel(new BorderLayout());
         panel.setOpaque(false);
         panel.setBorder(pad(SPACE_SM, 0, SPACE_SM, 0));
-        if(!canView) {
-            JLabel locked = new JLabel("非好友不可查看朋友圈");
-            locked.setFont(UI_FONT);
-            locked.setForeground(SOFT_MUTED);
-            panel.add(locked, BorderLayout.CENTER);
-            return panel;
-        }
         final java.util.List<Moment> moments = visibleMomentsForAuthor(username);
         if(moments.size() == 0) {
-            JLabel empty = new JLabel("暂无朋友圈动态");
+            JLabel empty = new JLabel("暂无可查看的朋友圈动态");
             empty.setFont(UI_FONT);
             empty.setForeground(SOFT_MUTED);
             panel.add(empty, BorderLayout.CENTER);
+            JLabel tip = new JLabel("双击查看全部朋友圈");
+            tip.setFont(new Font("Microsoft YaHei UI", Font.PLAIN, 11));
+            tip.setForeground(MUTED);
+            panel.add(tip, BorderLayout.SOUTH);
+            panel.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            panel.addMouseListener(new MouseAdapter() {
+                public void mouseClicked(MouseEvent e) {
+                    if(e.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(e)) showUserMomentsDialog(username);
+                }
+            });
             return panel;
         }
         JPanel preview = new JPanel(new GridLayout(1, Math.min(3, moments.size()), SPACE_SM, 0));
@@ -4081,10 +4084,6 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     }
 
     private void showUserMomentsDialog(final String username) {
-        if(!username.equalsIgnoreCase(currentUser) && !friends.contains(username)) {
-            JOptionPane.showMessageDialog(this, "只有好友的朋友圈可见。", "朋友圈", JOptionPane.INFORMATION_MESSAGE);
-            return;
-        }
         final JDialog dialog = new JDialog(this, username + " 的朋友圈", true);
         dialog.setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         dialog.setSize(560, 640);
@@ -4098,7 +4097,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                 feed.removeAll();
                 java.util.List<Moment> moments = visibleMomentsForAuthor(username);
                 if(moments.size() == 0) {
-                    feed.add(createEmptyState("暂无朋友圈动态", "刷新后可查看好友发布过的动态"));
+                    feed.add(createEmptyState("暂无可查看的朋友圈动态", "如果是非好友，只会显示对方设置为“所有人可见”的动态"));
                 } else {
                     for(int i=0;i<moments.size();i++) {
                         feed.add(createUserMomentCard(moments.get(i), feed, username));
@@ -4129,11 +4128,16 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         JLabel time = new JLabel(moment.time + " · " + visibilityLabel(moment.visibility));
         time.setFont(UI_FONT_SMALL);
         time.setForeground(MUTED);
-        JLabel text = new JLabel("<html><div style=\"width:450px;font-size:14px;line-height:1.5;\">" + htmlText(moment.text) + "</div></html>");
+        time.setAlignmentX(Component.LEFT_ALIGNMENT);
+        JLabel text = new JLabel("<html><div style=\"width:450px;text-align:left;font-size:14px;line-height:1.5;\">" + htmlText(moment.text) + "</div></html>");
         text.setFont(UI_FONT);
         text.setForeground(TEXT);
+        text.setHorizontalAlignment(SwingConstants.LEFT);
+        text.setAlignmentX(Component.LEFT_ALIGNMENT);
+        text.setMaximumSize(new Dimension(Integer.MAX_VALUE, text.getPreferredSize().height));
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, SPACE_SM, 0));
         buttons.setOpaque(false);
+        buttons.setAlignmentX(Component.LEFT_ALIGNMENT);
         boolean liked = moment.likes.contains(currentUser);
         JButton like = createButton(liked ? "取消点赞" : "点赞", false);
         JButton comment = createButton("评论", false);
@@ -4177,13 +4181,18 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         card.add(text);
         if(moment.imageData != null) {
             card.add(Box.createVerticalStrut(SPACE_SM));
-            card.add(createMomentImagePreview(moment, 360, 220));
+            Component image = createMomentImagePreview(moment, 360, 220);
+            if(image instanceof JComponent) ((JComponent) image).setAlignmentX(Component.LEFT_ALIGNMENT);
+            card.add(image);
         }
         card.add(Box.createVerticalStrut(SPACE_SM));
+        buttons.setMaximumSize(new Dimension(Integer.MAX_VALUE, 30));
         card.add(buttons);
         if(moment.likes.size() > 0 || moment.comments.size() > 0) {
             card.add(Box.createVerticalStrut(SPACE_XS));
-            card.add(createMomentSocialSummary(moment, feed, username));
+            Component social = createMomentSocialSummary(moment, feed, username);
+            if(social instanceof JComponent) ((JComponent) social).setAlignmentX(Component.LEFT_ALIGNMENT);
+            card.add(social);
         }
         card.setMaximumSize(new Dimension(Integer.MAX_VALUE, card.getPreferredSize().height));
         return card;
@@ -4197,7 +4206,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             feed.add(createUserMomentCard(moments.get(i), feed, username));
             feed.add(Box.createVerticalStrut(SPACE_MD));
         }
-        if(moments.size() == 0) feed.add(createEmptyState("暂无朋友圈动态", "刷新后可查看好友发布过的动态"));
+        if(moments.size() == 0) feed.add(createEmptyState("暂无可查看的朋友圈动态", "如果是非好友，只会显示对方设置为“所有人可见”的动态"));
         feed.revalidate();
         feed.repaint();
     }
@@ -4206,10 +4215,12 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         BubblePanel panel = new BubblePanel(SURFACE_SOFT, BORDER_LIGHT, RADIUS_MD);
         panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
         panel.setBorder(pad(SPACE_SM));
+        panel.setAlignmentX(Component.LEFT_ALIGNMENT);
         if(moment.likes.size() > 0) {
             JLabel likes = new JLabel("点赞 " + moment.likes.size() + " · " + membersToCsv(moment.likes));
             likes.setFont(UI_FONT_SMALL);
             likes.setForeground(PRIMARY_DARK);
+            likes.setAlignmentX(Component.LEFT_ALIGNMENT);
             panel.add(likes);
         }
         for(int i=0;i<moment.comments.size();i++) {
@@ -4219,6 +4230,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                     + "：" + htmlText(c.text) + "</div></html>");
             line.setFont(UI_FONT_SMALL);
             line.setForeground(TEXT);
+            line.setHorizontalAlignment(SwingConstants.LEFT);
+            line.setAlignmentX(Component.LEFT_ALIGNMENT);
             if(moment.author.equalsIgnoreCase(currentUser)) {
                 line.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
                 line.setToolTipText("点击回复该评论");
@@ -4231,6 +4244,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             if(i > 0 || moment.likes.size() > 0) panel.add(Box.createVerticalStrut(4));
             panel.add(line);
         }
+        panel.setMaximumSize(new Dimension(Integer.MAX_VALUE, panel.getPreferredSize().height));
         return panel;
     }
 
@@ -4815,7 +4829,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
 
     private String commentFingerprint(MomentComment c) {
         if(c == null) return "";
-        return nullSafe(c.time) + "|" + nullSafe(c.author) + "|" + nullSafe(c.text);
+        return nullSafe(c.time) + "|" + nullSafe(c.author) + "|" + nullSafe(c.text) + "|" + nullSafe(c.replyTo);
     }
 
     private void addMomentNotification(String actor, String action, String detail) {
@@ -4871,7 +4885,9 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     }
 
     private void updateMomentBadge() {
-        if(buttonMoments instanceof RailButton) ((RailButton)buttonMoments).setBadgeCount(unreadMomentNotificationCount());
+        int unreadCount = unreadMomentNotificationCount();
+        if(buttonMoments instanceof RailButton) ((RailButton)buttonMoments).setBadgeCount(unreadCount);
+        if(activeMomentsDialog != null) activeMomentsDialog.updateMessageButtonBadge();
     }
 
     private void showMomentNotificationsDialog(Component parent) {
@@ -4954,7 +4970,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             if(i > 0) builder.append('\n');
             builder.append(nullSafe(comment.time)).append('\u001f')
                     .append(nullSafe(comment.author)).append('\u001f')
-                    .append(encodeToken(comment.text));
+                    .append(encodeToken(comment.text)).append('\u001f')
+                    .append(encodeToken(comment.replyTo));
         }
         return encodeToken(builder.toString());
     }
@@ -4965,14 +4982,14 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         if(raw.length() == 0) return comments;
         String[] rows = raw.split("\\n");
         for(int i=0;i<rows.length;i++) {
-            String[] parts = rows[i].split("\u001f", 3);
-            if(parts.length == 3) {
-                comments.add(new MomentComment(parts[0], parts[1], decodeToken(parts[2])));
+            String[] parts = rows[i].split("\u001f", 4);
+            if(parts.length >= 3) {
+                String replyTo = parts.length >= 4 ? decodeToken(parts[3]) : "";
+                comments.add(new MomentComment(parts[0], parts[1], decodeToken(parts[2]), replyTo));
             }
         }
         return comments;
     }
-
     private static String nullSafe(String value) {
         return value == null ? "" : value;
     }
@@ -5941,6 +5958,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         private JLabel momentImageLabel;
         private JLabel publishStatusLabel;
         private JTextField searchField;
+        private BadgeButton momentMessageButton;
 
         MomentsDialog(JFrame owner) {
             super(owner, "朋友圈", true);
@@ -5984,7 +6002,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, SPACE_SM, 0));
             actions.setOpaque(false);
             JButton refreshButton = smallButton("刷新");
-            JButton messageButton = smallButton("消息");
+            momentMessageButton = smallBadgeButton("消息");
+            JButton messageButton = momentMessageButton;
             JButton permissionButton = smallButton("权限");
             JButton composeButton = createButton("发布动态", true);
             composeButton.setPreferredSize(new Dimension(96, BUTTON_HEIGHT));
@@ -6273,20 +6292,31 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             JPanel body = new JPanel();
             body.setOpaque(false);
             body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
-            JLabel text = new JLabel("<html><div style=\"width:520px;font-size:14px;line-height:1.5;\">"
+            body.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+            JLabel text = new JLabel("<html><div style=\"width:520px;text-align:left;font-size:14px;line-height:1.5;\">"
                     + htmlText(moment.text) + "</div></html>");
             text.setFont(new Font("Microsoft YaHei UI", Font.PLAIN, 14));
             text.setForeground(TEXT);
+            text.setHorizontalAlignment(SwingConstants.LEFT);
+            text.setAlignmentX(Component.LEFT_ALIGNMENT);
+            text.setMaximumSize(new Dimension(Integer.MAX_VALUE, text.getPreferredSize().height));
             body.add(text);
             if(moment.imageData != null) {
                 body.add(Box.createVerticalStrut(SPACE_SM));
-                body.add(createMomentImagePreview(moment, 520, 260));
+                Component image = createMomentImagePreview(moment, 520, 260);
+                if(image instanceof JComponent) ((JComponent) image).setAlignmentX(Component.LEFT_ALIGNMENT);
+                body.add(image);
             }
             body.add(Box.createVerticalStrut(SPACE_MD));
-            body.add(createMomentActions(moment));
+            Component actions = createMomentActions(moment);
+            if(actions instanceof JComponent) ((JComponent) actions).setAlignmentX(Component.LEFT_ALIGNMENT);
+            body.add(actions);
             if(moment.likes.size() > 0 || moment.comments.size() > 0) {
                 body.add(Box.createVerticalStrut(SPACE_SM));
-                body.add(createMomentSocialPanel(moment));
+                Component social = createMomentSocialPanel(moment);
+                if(social instanceof JComponent) ((JComponent) social).setAlignmentX(Component.LEFT_ALIGNMENT);
+                body.add(social);
             }
             card.add(body, BorderLayout.CENTER);
             card.setMaximumSize(new Dimension(Integer.MAX_VALUE, card.getPreferredSize().height));
@@ -6316,8 +6346,11 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         private Component createMomentActions(final Moment moment) {
             JPanel row = new JPanel(new BorderLayout());
             row.setOpaque(false);
+            row.setAlignmentX(Component.LEFT_ALIGNMENT);
+            row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 30));
             JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, SPACE_SM, 0));
             buttons.setOpaque(false);
+            buttons.setAlignmentX(Component.LEFT_ALIGNMENT);
             boolean liked = moment.likes.contains(currentUser);
             JButton likeButton = smallButton(liked ? "取消点赞" : "点赞");
             JButton commentButton = smallButton("评论");
@@ -6368,10 +6401,12 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             BubblePanel panel = new BubblePanel(SURFACE_SOFT, BORDER_LIGHT, RADIUS_MD);
             panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
             panel.setBorder(pad(SPACE_SM, SPACE_MD, SPACE_SM, SPACE_MD));
+            panel.setAlignmentX(Component.LEFT_ALIGNMENT);
             if(moment.likes.size() > 0) {
                 JLabel likes = new JLabel("点赞 " + moment.likes.size() + " · " + membersToCsv(moment.likes));
                 likes.setFont(UI_FONT_SMALL);
                 likes.setForeground(PRIMARY_DARK);
+                likes.setAlignmentX(Component.LEFT_ALIGNMENT);
                 panel.add(likes);
             }
             for(int i=0;i<moment.comments.size();i++) {
@@ -6384,6 +6419,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                         + escapeHtml(comment.time) + "</span></div></html>");
                 line.setFont(UI_FONT_SMALL);
                 line.setForeground(TEXT);
+                line.setHorizontalAlignment(SwingConstants.LEFT);
+                line.setAlignmentX(Component.LEFT_ALIGNMENT);
                 if(moment.author.equalsIgnoreCase(currentUser)) {
                     line.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
                     line.setToolTipText("点击回复该评论");
@@ -6398,6 +6435,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                 if(i > 0 || moment.likes.size() > 0) panel.add(Box.createVerticalStrut(5));
                 panel.add(line);
             }
+            panel.setMaximumSize(new Dimension(Integer.MAX_VALUE, panel.getPreferredSize().height));
             return panel;
         }
 
@@ -6454,6 +6492,20 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             addMomentComment(moment.id, text);
             refreshFeed();
             showTip("评论已发布");
+        }
+
+        private void updateMessageButtonBadge() {
+            if(momentMessageButton != null) {
+                momentMessageButton.setBadgeCount(unreadMomentNotificationCount());
+            }
+        }
+
+        private BadgeButton smallBadgeButton(String text) {
+            BadgeButton button = new BadgeButton(text, false);
+            button.setFont(UI_FONT_BOLD);
+            button.setPreferredSize(new Dimension(58, 30));
+            button.setBadgeCount(unreadMomentNotificationCount());
+            return button;
         }
 
         private JButton smallButton(String text) {
@@ -7956,6 +8008,39 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             g2.drawRoundRect(1, 1, getWidth() - 3, getHeight() - 3, RADIUS_LG, RADIUS_LG);
             g2.dispose();
             super.paintComponent(g);
+        }
+    }
+
+    class BadgeButton extends StyledButton {
+        private int badgeCount = 0;
+
+        BadgeButton(String text, boolean primary) {
+            super(text, primary);
+        }
+
+        void setBadgeCount(int count) {
+            this.badgeCount = Math.max(0, count);
+            repaint();
+        }
+
+        protected void paintComponent(Graphics g) {
+            super.paintComponent(g);
+            if(badgeCount <= 0) return;
+            Graphics2D g2 = (Graphics2D)g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            String badgeText = badgeCount > 99 ? "99+" : String.valueOf(badgeCount);
+            g2.setFont(new Font("Microsoft YaHei UI", Font.BOLD, 10));
+            FontMetrics fm = g2.getFontMetrics();
+            int h = 18;
+            int w = badgeText.length() == 1 ? h : Math.max(h, fm.stringWidth(badgeText) + 10);
+            int x = getWidth() - w - 2;
+            int y = -1;
+            if(x < 0) x = 0;
+            g2.setColor(new Color(250, 81, 81));
+            g2.fillRoundRect(x, y, w, h, h, h);
+            g2.setColor(Color.WHITE);
+            g2.drawString(badgeText, x + (w - fm.stringWidth(badgeText)) / 2, y + (h + fm.getAscent() - fm.getDescent()) / 2 - 1);
+            g2.dispose();
         }
     }
 
