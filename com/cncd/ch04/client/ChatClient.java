@@ -150,6 +150,9 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     JButton buttonHeaderMore, buttonVideo;
     JButton buttonCreateGroup;
     JButton buttonProfile, buttonMoments;
+    JTextField messageSearchField;
+    JLabel messageSearchCountLabel;
+    JButton buttonSearchPrev, buttonSearchNext, buttonSearchClear;
     JLabel statusLabel, connectionDotLabel, conversationTitleLabel, conversationSubtitleLabel;
     JLabel conversationStateLabel, composerHintLabel, composerCountLabel;
     JLabel sidebarNameLabel, sidebarSignatureLabel;
@@ -192,8 +195,11 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     private Map<String, ChatMessage> trackedOutgoingMessages = new LinkedHashMap<String, ChatMessage>();
     private Map<String, JLabel> trackedStatusLabels = new HashMap<String, JLabel>();
     private Map<String, java.util.List<String>> pendingReadReceipts = new HashMap<String, java.util.List<String>>();
+    private java.util.List<String> messageSearchMatches = new ArrayList<String>();
     private LinkedList<String> localBroadcastEchoes = new LinkedList<String>();
     private String renderedConversationKey = null;
+    private String messageSearchKeyword = "";
+    private int messageSearchIndex = -1;
     private VoicePlayback activeVoicePlayback;
     private MomentsDialog activeMomentsDialog;
     private java.util.List<MomentNotification> momentNotifications = new ArrayList<MomentNotification>();
@@ -223,6 +229,7 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         File savedFile;
         String conversationKey;
         String messageId;
+        String localMessageId = UUID.randomUUID().toString();
         String deliveryStatus;
         long sentAtMillis = 0L;
         boolean recalled = false;
@@ -715,10 +722,70 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         headerActions.add(buttonHeaderMore);
         header.add(headerActions, BorderLayout.EAST);
 
+        JPanel chatBody = new JPanel(new BorderLayout());
+        chatBody.setBackground(CHAT_BACKGROUND);
+        chatBody.add(createMessageSearchPanel(), BorderLayout.NORTH);
+        chatBody.add(createHistoryPanel(), BorderLayout.CENTER);
+
         chatPanel.add(header, BorderLayout.NORTH);
-        chatPanel.add(createHistoryPanel(), BorderLayout.CENTER);
+        chatPanel.add(chatBody, BorderLayout.CENTER);
         chatPanel.add(createInputPanel(), BorderLayout.SOUTH);
         return chatPanel;
+    }
+
+    private JPanel createMessageSearchPanel() {
+        JPanel panel = new JPanel(new BorderLayout(SPACE_SM, 0));
+        panel.setBackground(SURFACE_SOFT);
+        panel.setBorder(new CompoundBorder(
+                new MatteBorder(0, 0, 1, 0, BORDER_LIGHT),
+                pad(SPACE_SM, SPACE_MD, SPACE_SM, SPACE_MD)));
+
+        messageSearchField = new PromptTextField("", 18, "搜索当前会话消息");
+        styleTextField(messageSearchField);
+        messageSearchField.setToolTipText("搜索当前会话中的消息内容、发送者或文件名");
+        messageSearchField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            public void insertUpdate(javax.swing.event.DocumentEvent e) { applyMessageSearchField(); }
+            public void removeUpdate(javax.swing.event.DocumentEvent e) { applyMessageSearchField(); }
+            public void changedUpdate(javax.swing.event.DocumentEvent e) { applyMessageSearchField(); }
+        });
+        messageSearchField.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) { goToMessageSearchMatch(1); }
+        });
+
+        messageSearchCountLabel = createHintLabel("0/0");
+        messageSearchCountLabel.setHorizontalAlignment(SwingConstants.CENTER);
+        messageSearchCountLabel.setPreferredSize(new Dimension(48, INPUT_HEIGHT));
+
+        buttonSearchPrev = createButton("上", false);
+        buttonSearchNext = createButton("下", false);
+        buttonSearchClear = createButton("清", false);
+        buttonSearchPrev.setPreferredSize(new Dimension(42, BUTTON_HEIGHT));
+        buttonSearchNext.setPreferredSize(new Dimension(42, BUTTON_HEIGHT));
+        buttonSearchClear.setPreferredSize(new Dimension(42, BUTTON_HEIGHT));
+        buttonSearchPrev.setToolTipText("上一条匹配消息");
+        buttonSearchNext.setToolTipText("下一条匹配消息");
+        buttonSearchClear.setToolTipText("清空当前会话搜索");
+        buttonSearchPrev.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) { goToMessageSearchMatch(-1); }
+        });
+        buttonSearchNext.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) { goToMessageSearchMatch(1); }
+        });
+        buttonSearchClear.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) { clearMessageSearch(); }
+        });
+
+        JPanel controls = new JPanel(new FlowLayout(FlowLayout.RIGHT, SPACE_XS, 0));
+        controls.setOpaque(false);
+        controls.add(messageSearchCountLabel);
+        controls.add(buttonSearchPrev);
+        controls.add(buttonSearchNext);
+        controls.add(buttonSearchClear);
+
+        panel.add(messageSearchField, BorderLayout.CENTER);
+        panel.add(controls, BorderLayout.EAST);
+        updateMessageSearchControls();
+        return panel;
     }
 
     private JPanel createHistoryPanel() {
@@ -2207,6 +2274,9 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     }
 
     private String storeConversationMessage(ChatMessage message) {
+        if(message.localMessageId == null || message.localMessageId.length() == 0) {
+            message.localMessageId = UUID.randomUUID().toString();
+        }
         String key = conversationKeyForMessage(message);
         message.conversationKey = key;
         java.util.List<ChatMessage> messages = conversationMessages.get(key);
@@ -2229,13 +2299,116 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
     }
 
     private void renderConversationMessages(String key) {
+        String previousRenderedKey = renderedConversationKey;
         renderedConversationKey = key;
-        if(historyWindow == null) return;
+        if(!sameConversation(previousRenderedKey, key)) messageSearchIndex = -1;
         java.util.List<ChatMessage> messages = key == null
                 ? null
                 : conversationMessages.get(key);
+        updateMessageSearchResults(messages);
+        if(historyWindow == null) return;
         trackedStatusLabels.clear();
         historyWindow.showMessages(messages, emptyConversationTitle(key), emptyConversationText(key));
+    }
+
+    private void applyMessageSearchField() {
+        String next = messageSearchField == null ? "" : messageSearchField.getText().trim();
+        if(!next.equals(messageSearchKeyword)) {
+            messageSearchKeyword = next;
+            messageSearchIndex = -1;
+        }
+        renderConversationMessages(selectedConversationKey());
+    }
+
+    private boolean isMessageSearchActive() {
+        return messageSearchKeyword != null && messageSearchKeyword.trim().length() > 0;
+    }
+
+    private void updateMessageSearchResults(java.util.List<ChatMessage> messages) {
+        String currentId = currentMessageSearchMatchId();
+        messageSearchMatches.clear();
+        if(isMessageSearchActive() && messages != null) {
+            for(int i=0;i<messages.size();i++) {
+                ChatMessage message = messages.get(i);
+                if(messageMatchesSearch(message, messageSearchKeyword)) {
+                    if(message.localMessageId == null || message.localMessageId.length() == 0) {
+                        message.localMessageId = UUID.randomUUID().toString();
+                    }
+                    messageSearchMatches.add(message.localMessageId);
+                }
+            }
+        }
+        if(messageSearchMatches.size() == 0) {
+            messageSearchIndex = -1;
+        } else if(currentId != null && messageSearchMatches.contains(currentId)) {
+            messageSearchIndex = messageSearchMatches.indexOf(currentId);
+        } else if(messageSearchIndex < 0 || messageSearchIndex >= messageSearchMatches.size()) {
+            messageSearchIndex = 0;
+        }
+        updateMessageSearchControls();
+    }
+
+    private boolean messageMatchesSearch(ChatMessage message, String keyword) {
+        if(message == null || keyword == null || keyword.trim().length() == 0) return false;
+        String needle = keyword.trim().toLowerCase(Locale.ROOT);
+        return containsSearchText(message.body, needle)
+                || containsSearchText(message.sender, needle)
+                || containsSearchText(message.fileName, needle);
+    }
+
+    private boolean containsSearchText(String value, String needle) {
+        return value != null && value.toLowerCase(Locale.ROOT).indexOf(needle) >= 0;
+    }
+
+    private boolean isMessageSearchMatch(ChatMessage message) {
+        return message != null && isMessageSearchActive()
+                && message.localMessageId != null
+                && messageSearchMatches.contains(message.localMessageId);
+    }
+
+    private boolean isCurrentMessageSearchMatch(ChatMessage message) {
+        String currentId = currentMessageSearchMatchId();
+        return message != null && currentId != null && currentId.equals(message.localMessageId);
+    }
+
+    private String currentMessageSearchMatchId() {
+        if(messageSearchIndex < 0 || messageSearchIndex >= messageSearchMatches.size()) return null;
+        return messageSearchMatches.get(messageSearchIndex);
+    }
+
+    private void goToMessageSearchMatch(int delta) {
+        if(!isMessageSearchActive() || messageSearchMatches.size() == 0) return;
+        int size = messageSearchMatches.size();
+        if(messageSearchIndex < 0) messageSearchIndex = 0;
+        else messageSearchIndex = (messageSearchIndex + delta + size) % size;
+        updateMessageSearchControls();
+        renderConversationMessages(selectedConversationKey());
+    }
+
+    private void clearMessageSearch() {
+        if(messageSearchField != null && messageSearchField.getText().length() > 0) {
+            messageSearchField.setText("");
+            messageSearchField.requestFocusInWindow();
+            return;
+        }
+        messageSearchKeyword = "";
+        messageSearchIndex = -1;
+        messageSearchMatches.clear();
+        updateMessageSearchControls();
+        renderConversationMessages(selectedConversationKey());
+    }
+
+    private void updateMessageSearchControls() {
+        boolean active = isMessageSearchActive();
+        int count = messageSearchMatches.size();
+        if(messageSearchCountLabel != null) {
+            messageSearchCountLabel.setText(active && count > 0 ? (messageSearchIndex + 1) + "/" + count : "0/0");
+            messageSearchCountLabel.setForeground(active && count == 0 ? WARNING : MUTED);
+        }
+        boolean canNavigate = active && count > 0;
+        if(buttonSearchPrev != null) buttonSearchPrev.setEnabled(canNavigate);
+        if(buttonSearchNext != null) buttonSearchNext.setEnabled(canNavigate);
+        if(buttonSearchClear != null) buttonSearchClear.setEnabled(active);
     }
 
     private String emptyConversationTitle(String key) {
@@ -8448,7 +8621,10 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
         public void addMessage(ChatMessage message) {
             if(message == null) return;
             String key = storeConversationMessage(message);
-            if(isSelectedConversation(key)) appendMessageRow(message, true);
+            if(isSelectedConversation(key)) {
+                if(isMessageSearchActive()) renderConversationMessages(key);
+                else appendMessageRow(message, true);
+            }
             updateConversationPreview(message);
         }
 
@@ -8466,7 +8642,8 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             }
             revalidate();
             repaint();
-            scrollToBottom();
+            if(currentMessageSearchMatchId() != null) scrollToCurrentSearchMatch();
+            else if(!isMessageSearchActive()) scrollToBottom();
         }
 
         private void appendMessageRow(ChatMessage message, boolean refresh) {
@@ -8477,13 +8654,29 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
             Component row = message.kind == MessageKind.SYSTEM
                     ? createSystemRow(message)
                     : createChatRow(message);
-            add(row);
+            add(decorateSearchRow(message, row));
             add(Box.createVerticalStrut(6));
             if(refresh) {
                 revalidate();
                 repaint();
-                scrollToBottom();
+                if(currentMessageSearchMatchId() != null) scrollToCurrentSearchMatch();
+                else scrollToBottom();
             }
+        }
+
+        private Component decorateSearchRow(ChatMessage message, Component row) {
+            if(!isMessageSearchMatch(message)) return row;
+            boolean current = isCurrentMessageSearchMatch(message);
+            Color fill = current ? new Color(255, 244, 201) : new Color(255, 250, 229);
+            Color stroke = current ? WARNING : new Color(240, 213, 120);
+            JPanel wrapper = new BubblePanel(fill, stroke, RADIUS_LG);
+            wrapper.setLayout(new BorderLayout());
+            wrapper.setBorder(pad(current ? 6 : 4, 8, current ? 6 : 4, 8));
+            wrapper.setAlignmentX(Component.LEFT_ALIGNMENT);
+            wrapper.putClientProperty("messageSearchId", message.localMessageId);
+            wrapper.add(row, BorderLayout.CENTER);
+            wrapper.setMaximumSize(new Dimension(Integer.MAX_VALUE, wrapper.getPreferredSize().height));
+            return wrapper;
         }
 
         private void scrollToBottom() {
@@ -8496,6 +8689,36 @@ public class ChatClient extends JFrame implements KeyListener, ActionListener, F
                     }
                 }
             });
+        }
+
+        private void scrollToCurrentSearchMatch() {
+            SwingUtilities.invokeLater(new Runnable() {
+                public void run() {
+                    String currentId = currentMessageSearchMatchId();
+                    if(currentId == null) return;
+                    Component target = findSearchComponent(ClientHistory.this, currentId);
+                    if(target == null) return;
+                    Rectangle bounds = SwingUtilities.convertRectangle(target.getParent(), target.getBounds(), ClientHistory.this);
+                    bounds.grow(0, 12);
+                    scrollRectToVisible(bounds);
+                }
+            });
+        }
+
+        private Component findSearchComponent(Container root, String id) {
+            Component[] children = root.getComponents();
+            for(int i=0;i<children.length;i++) {
+                Component child = children[i];
+                if(child instanceof JComponent) {
+                    Object value = ((JComponent)child).getClientProperty("messageSearchId");
+                    if(id.equals(value)) return child;
+                }
+                if(child instanceof Container) {
+                    Component nested = findSearchComponent((Container)child, id);
+                    if(nested != null) return nested;
+                }
+            }
+            return null;
         }
 
         public void addInlineComponent(Component component) {
